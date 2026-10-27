@@ -30,6 +30,15 @@ export async function hasAudio(src) {
   return /Stream #\d+:\d+.*: Audio:/.test(out);
 }
 
+// True when a frame shows nothing: fully transparent, or (opaque) one flat colour.
+export async function isBlank(png, transparent) {
+  const vf = transparent ? 'format=rgba,alphaextract,signalstats,metadata=print' : 'format=yuv444p,signalstats,metadata=print';
+  const out = await run(FFMPEG, ['-hide_banner', '-i', png, '-vf', vf, '-f', 'null', '-'], { anyExit: true });
+  const v = (k) => Number(out.match(new RegExp(`lavfi\\.signalstats\\.${k}=(\\d+)`))?.[1]);
+  if (transparent) return v('YMAX') === 0;
+  return v('YMIN') === v('YMAX') && v('UMIN') === v('UMAX') && v('VMIN') === v('VMAX');
+}
+
 // Writes PNG buffers from an async producer to ffmpeg's stdin, respecting backpressure.
 export function pngPipe(produce) {
   return async (stdin) => {

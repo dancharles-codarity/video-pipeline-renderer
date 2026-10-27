@@ -7,10 +7,26 @@ import { basename, join } from 'node:path';
 import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { prepareJob } from './job.js';
 import { stills, preview, master } from './ops.js';
+import { closeAll } from './browser.js';
+import { freeMB, sweep } from './serverless.js';
 
 const OPS = { stills, preview, master };
 const INLINE_LIMIT = 3.5 * 1024 * 1024; // under Vercel's 4.5 MB response cap once base64'd
 const MIME = { '.mp4': 'video/mp4', '.mov': 'video/quicktime', '.png': 'image/png' };
+// Stop a job before Vercel's 300 s limit kills it, so its cleanup always runs.
+const BUDGET_S = Number(process.env.VPR_BUDGET_S ?? 270);
+// Below this, Chromium cannot allocate its shared memory and crashes.
+const MIN_FREE_MB = 120;
+
+// One job at a time per instance: the serverless Chromium is single-process and
+// /tmp is shared, so two at once compete for both.
+let queue = Promise.resolve();
+function exclusive(fn) {
+  const run = queue.then(fn, fn);
+  queue = run.catch(() => {});
+  return run;
+}
+
 // How long a link to a file in a private Blob store stays valid.
 const LINK_DAYS = Number(process.env.VPR_LINK_DAYS ?? 7);
 
@@ -89,7 +105,11 @@ async function deliver(files, op, { links }) {
 // body: {op, job, names?, options?: {fps, scale, pad, reel, timecode}}
 // links: require URLs rather than inline files. inspect(op, result): extra data
 // computed from the output files before they are removed.
-export async function handle(body, { links = false, inspect } = {}) {
+export function handle(body, opts = {}) {
+  return exclusive(() => run(body, opts));
+}
+
+async function run(body, { links = false, inspect } = {}) {
   const { op, job, names = [], options = {} } = body ?? {};
   if (!OPS[op]) throw new HttpError(400, 'op must be stills, preview or master');
   let prepared;
@@ -98,19 +118,40 @@ export async function handle(body, { links = false, inspect } = {}) {
   } catch (e) {
     throw new HttpError(400, e.message);
   }
+  sweep();
+  const free = freeMB();
+  if (free !== null && free < MIN_FREE_MB) {
+    throw new HttpError(503, `only ${free} MB free in /tmp after cleanup (needs ${MIN_FREE_MB}); try again in a minute, a fresh instance will pick it up`);
+  }
   const outDir = mkdtempSync(join(tmpdir(), 'vpr-out-'));
+  let timer;
   try {
     const { fps, scale, pad, reel, timecode } = options;
     const t0 = Date.now();
     // One film at a time: the serverless Chromium runs --single-process, so a
     // second film gains nothing and doubles peak memory (two full-res films
     // at once crashed it on Vercel).
-    const result = await OPS[op](prepared, { names, outDir, fps, scale, pad, reel, timecode, concurrency: 1 });
+    const work = OPS[op](prepared, { names, outDir, fps, scale, pad, reel, timecode, concurrency: 1 });
+    const late = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new HttpError(504, `stopped after ${BUDGET_S} s; render fewer items per call`)), BUDGET_S * 1000);
+    });
+    work.catch(() => {}); // once timed out, its own rejection is expected
+    let result;
+    try {
+      result = await Promise.race([work, late]);
+    } catch (e) {
+      await closeAll(); // never leave a browser running on the instance
+      if (/Target page, context or browser has been closed/.test(e.message)) {
+        throw new HttpError(500, `the browser crashed (${freeMB()} MB free in /tmp); try again, and if it repeats, report this message`);
+      }
+      throw e;
+    }
     const files = await deliver(outputs(op, result), op, { links });
     const extra = inspect ? await inspect(op, result) : undefined;
     const strip = (o) => JSON.parse(JSON.stringify(o, (k, v) => (['file', 'sheet', 'reviews', 'reel'].includes(k) ? undefined : v)));
     return { op, ms: Date.now() - t0, result: strip(result), files, ...(extra ? { extra } : {}) };
   } finally {
+    clearTimeout(timer);
     rmSync(outDir, { recursive: true, force: true });
   }
 }

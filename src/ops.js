@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url';
 import { Renderer } from './browser.js';
 import { buildFilm } from './film.js';
 import { PREVIEW_DEFAULTS } from './formats.js';
-import { ffmpeg, hasAudio, pngPipe, PNG_IN, MASTER_CODEC } from './ffmpeg.js';
+import { ffmpeg, hasAudio, isBlank, pngPipe, PNG_IN, MASTER_CODEC } from './ffmpeg.js';
 
 const TIMECODE_FONT = readFileSync(fileURLToPath(new URL('../assets/timecode.ttf', import.meta.url)));
 
@@ -68,9 +68,11 @@ export async function stills(job, { names, outDir, concurrency = 3, log = () => 
     return await mapLimit(items, concurrency, (item) => withFilm(renderer, job, item, async (film) => {
       const times = job.fmt.stills.map((f) => Math.round(item.dur * f * 100) / 100);
       const reviews = [];
+      let blank = 0;
       for (const t of times) {
         const raw = join(outDir, `still-${item.name}-t_${t.toFixed(2)}.png`);
         writeFileSync(raw, await film.frame(t, 1));
+        if (await isBlank(raw, item.transparent)) blank++;
         const review = join(outDir, `review-${item.name}-t_${t.toFixed(2)}.png`);
         const chain = [];
         const args = [];
@@ -78,6 +80,10 @@ export async function stills(job, { names, outDir, concurrency = 3, log = () => 
           // The real frame at the moment this still will sit over: catches text over the face.
           args.push('-ss', r3(item.at + t).toFixed(3), '-i', job.base, '-i', raw);
           chain.push(`[0:v]scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},setsar=1[b]`, '[b][1:v]overlay=0:0[c]');
+        } else if (item.transparent) {
+          // No footage: lay the overlay on grey so light text stays visible.
+          args.push('-f', 'lavfi', '-i', `color=c=0x2a2a2a:s=${W}x${H}`, '-i', raw);
+          chain.push('[0:v][1:v]overlay=0:0[c]');
         } else {
           args.push('-i', raw);
           chain.push('[0:v]null[c]');
@@ -94,7 +100,11 @@ export async function stills(job, { names, outDir, concurrency = 3, log = () => 
       const stack = reviews.map((_, i) => `[s${i}]`).join('') + `hstack=inputs=${reviews.length}[o]`;
       await ffmpeg([...ins, '-filter_complex', `${scaled};${stack}`, '-map', '[o]', '-frames:v', '1', sheet]);
       log(`${item.name}: ${times.length} stills, sheet ${sheet}`);
-      return { name: item.name, times, sheet, reviews };
+      // A scene that draws nothing loads without an error, so say so here.
+      const warnings = blank === times.length
+        ? ['every still is blank: build the DOM once in init(kit) with kit.stage.append(...), then change styles from t in render(t, kit); what render returns is ignored']
+        : [];
+      return { name: item.name, times, sheet, reviews, warnings };
     }));
   } finally {
     await renderer.close();

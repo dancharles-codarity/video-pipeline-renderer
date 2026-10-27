@@ -92,7 +92,40 @@ One JSON file per video. A source is an http(s) URL, a data: URI, or (local runs
 
 ### Scenes
 
-A scene is one Motion scene with the id `g`, a pure function of `t`, written against the Motion player's kit (`seg`, `eo`, `eob`, `ei`, `lerp`, `kit.h`, `kit.esc`, `kit.assets.url`). The client-neutral helpers in `kit/helpers.js` (`rise`, `slide`, `fade`, `bar`, `Q`) are prepended to every scene; set `"helpers": false` on an item to leave them out. Style with the design system's variables and classes, not hard-coded values, so the same scene works for any client.
+A scene is one Motion scene with the id `g`, and everything on screen is a pure function of `t`. The contract:
+
+- The code calls `kit.scene('g', { init(kit) { ... }, render(t, kit) { ... } })`.
+- `init(kit)` runs once. Build the DOM there and add it to the stage with `kit.stage.append(kit.h('<div ...>...</div>'))`, then keep handles to the styles you will change (`Q(kit, '.selector')` returns an element's `style`).
+- `render(t, kit)` runs for every frame, in any order. It sets styles (opacity, transform, text) from `t` and nothing else. **What it returns is ignored**: returning HTML, or building the DOM in `render`, gives blank frames, and the renderer warns when every still is blank.
+- `t` is seconds into the item; `kit.dur` is its duration. `P` holds `scene.params`.
+- Time helpers from the kit: `seg(t, a, b)` (0 to 1 progress of `t` across `a..b`), `lerp(a, b, p)`, easings `eo`, `ei`, `eob`. Markup helpers: `kit.h(html)`, `kit.esc(text)`, `kit.assets.url(name)`.
+- The client-neutral helpers in `kit/helpers.js` are prepended to every scene: `rise(style, t, t0, dur, dy)`, `slide(style, t, t0, dur, dx)`, `fade(style, t, t0, dur)`, `bar(style, t, t0, dur)` and `Q`. Set `"helpers": false` on an item to leave them out.
+
+A minimal working scene, a lower third that slides in, reveals its second line and fades out at the end:
+
+```js
+kit.scene('g', {
+  init(kit) {
+    kit.stage.append(kit.h(
+      '<div class="lt" style="position:absolute;left:120px;bottom:140px">' +
+        '<div class="lt-box" style="background:var(--bg-page);border-left:8px solid var(--accent-default);padding:22px 36px">' +
+          '<div style="color:var(--fg-1);font-size:56px;font-weight:700">' + kit.esc(P.name) + '</div>' +
+          '<div class="lt-role" style="color:var(--accent-default);font-size:32px;text-transform:uppercase">' + kit.esc(P.role) + '</div>' +
+        '</div>' +
+      '</div>'));
+    this.wrap = Q(kit, '.lt'); this.box = Q(kit, '.lt-box'); this.role = Q(kit, '.lt-role');
+  },
+  render(t, kit) {
+    const a = eo(seg(t, 0, 0.5));
+    this.box.opacity = a;
+    this.box.transform = 'translateX(' + lerp(-60, 0, a) + 'px)';
+    this.role.opacity = eo(seg(t, 0.15, 0.65));
+    this.wrap.opacity = 1 - ei(seg(t, kit.dur - 0.4, kit.dur));
+  },
+});
+```
+
+Style with the design system's variables and classes, not hard-coded values, so the same scene works for any client.
 
 Fonts come from the design system, never from `@font-face` rules with an http `url()` (the player rejects those and silently falls back). Keep transparent scrims small: a large semi-transparent area makes overlay masters of 100 MB or more. On vertical, the usable band is roughly y200 to y1350, and a full-frame card renders above captions, so design it to read without them.
 

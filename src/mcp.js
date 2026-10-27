@@ -23,7 +23,9 @@ const INSTRUCTIONS = `Cheap previews of motion graphics and B-roll over a client
 
 Order of use, cheapest first: render_stills (layout, type, text over the face, caption clearance), then render_preview (does the reveal land on the right word, does the B-roll sit right), then render_master only once a graphic is approved, for the file that gets placed.
 
-Each call takes a job: the format, the client's design system (tokens.json from their Design System artifact, fonts, motion CSS, logos), the footage URL on Bunny, and the items with their composition-time placements. Call get_job_reference once before writing a first job. Nothing about any client is stored here: every job brings its own design system. Footage and assets must be URLs (Bunny) or data: URIs; scene code goes inline.`;
+Each call takes a job: the format, the client's design system (tokens.json from their Design System artifact, fonts, motion CSS, logos), the footage URL on Bunny, and the items with their composition-time placements. Call get_job_reference once before writing a first job. Nothing about any client is stored here: every job brings its own design system. Footage and assets must be URLs (Bunny) or data: URIs; scene code goes inline.
+
+A scene builds its DOM once in init(kit) with kit.stage.append(...) and only changes styles from t in render(t, kit); what render returns is ignored, so returning HTML gives blank frames. get_job_reference has a working example.`;
 
 const JOB = {
   type: 'object',
@@ -136,7 +138,11 @@ async function callTool(name, args = {}) {
   try {
     const out = await handle({ op, job, names, options: { fps, scale, pad, reel, timecode } }, { links: true, inspect });
     const summary = { op, seconds: Math.round(out.ms / 100) / 10, result: out.result, files: out.files };
-    const content = [{ type: 'text', text: JSON.stringify(summary, null, 2) }];
+    const items = Array.isArray(out.result) ? out.result : [];
+    const notes = items.flatMap((r) => [...(r.warnings ?? []), ...(r.problems ?? [])].map((w) => `${r.name}: ${w}`));
+    const content = [];
+    if (notes.length) content.push({ type: 'text', text: 'Check before going on:\n' + notes.map((n) => '- ' + n).join('\n') });
+    content.push({ type: 'text', text: JSON.stringify(summary, null, 2) });
     for (const img of out.extra ?? []) {
       content.push({ type: 'text', text: op === 'stills' ? `Contact sheet: ${img.name}` : `Frames at 25, 50 and 75 percent of the preview window: ${img.name}` });
       content.push({ type: 'image', data: img.png, mimeType: 'image/png' });

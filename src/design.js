@@ -93,7 +93,8 @@ export async function buildDesign(design = {}, fetchSource) {
   const families = tokens?.type?.families ?? {};
   for (const [k, v] of Object.entries(families)) vars.push(`--font-${ident(k)}: ${safeValue(v)};`);
   const stage = [...vars];
-  if (families.body) stage.push('font-family: var(--font-body);');
+  // Without a body family the browser default is a serif; sans reads closer to any brand.
+  stage.push(families.body ? 'font-family: var(--font-body);' : 'font-family: sans-serif;');
   if (values.has('fg-1')) stage.push('color: var(--fg-1);');
   rules.push(`#stage { ${stage.join(' ')} }`);
 

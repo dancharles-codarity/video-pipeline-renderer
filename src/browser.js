@@ -41,10 +41,18 @@ async function launch() {
   return chromium.launch({ ...(exe ? { executablePath: exe } : {}), args: ARGS });
 }
 
+// Every open renderer, so a job that runs out of time can be stopped cleanly.
+const OPEN = new Set();
+
+export async function closeAll() {
+  await Promise.all([...OPEN].map((r) => r.close().catch(() => {})));
+}
+
 export class Renderer {
   static async open() {
     const r = new Renderer();
     r.browser = await launch();
+    OPEN.add(r);
     // One long-lived context with a page held open: the serverless build runs
     // --single-process, where closing a context takes the whole browser down.
     r.context = await r.browser.newContext();
@@ -113,7 +121,10 @@ export class Renderer {
     }
   }
 
-  async close() { await this.browser?.close(); }
+  async close() {
+    OPEN.delete(this);
+    await this.browser?.close();
+  }
 }
 
 class LoadedFilm {

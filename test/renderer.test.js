@@ -191,3 +191,32 @@ test('auth: header or query token, constant-time compare, refuse when unset', as
   assert.equal(authorised('', ''), false);
   assert.equal(authorised('anything', undefined), false);
 });
+
+const T1 = {
+  format: 'landscape',
+  design: { tokens: { name: 'Test', color: { themes: [{ id: 'dark' }], tokens: [
+    { name: 'bg-page', value: { dark: '#0E1420' } }, { name: 'fg-1', value: { dark: '#FFFFFF' } }, { name: 'accent-default', value: { dark: '#2EC4B6' } }] } } },
+};
+
+test('scenes: the README example renders and is not blank', async () => {
+  const readme = readFileSync(join(ROOT, 'README.md'), 'utf8');
+  const from = readme.indexOf('```js', readme.indexOf('A minimal working scene'));
+  const code = readme.slice(from + 5, readme.indexOf('```', from + 5));
+  const job = await prepareJob({ ...T1, items: [{ name: 'lt', at: 4, dur: 5, transparent: true, scene: { code, params: { name: 'Alex Morgan', role: 'Head of Events' } } }] }, dir, { remote: true });
+  const [r] = await stills(job, { outDir: join(dir, 'out-ex') });
+  assert.deepEqual(r.warnings, []);
+  assert.deepEqual(r.problems, []);
+});
+
+test('scenes: a render that returns HTML is flagged as blank', async () => {
+  const code = "kit.scene('g',{render(t,k){ return k.h('<div style=\"color:#fff;font-size:80px\">Hi</div>'); }});";
+  const job = await prepareJob({ ...T1, items: [{ name: 'bad', at: 0, dur: 2, transparent: true, scene: { code } }] }, dir, { remote: true });
+  const [r] = await stills(job, { outDir: join(dir, 'out-bad') });
+  assert.match(r.warnings[0], /every still is blank/);
+});
+
+test('service: sweep and free-space check are safe off Vercel', async () => {
+  const { sweep, freeMB } = await import('../src/serverless.js');
+  assert.deepEqual(sweep(), { killed: 0, removed: 0 });
+  assert.ok(freeMB() > 0);
+});
