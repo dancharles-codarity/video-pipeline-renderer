@@ -1,0 +1,16 @@
+{
+  "format": "vertical",
+  "brand": "matrix-events",
+  "base": "footage/short-01.mp4",
+  "items": [
+    { "name": "s01-attendance-vs-pipeline", "dur": 9.7, "at": 18.0,
+      "scene": { "template": "vertical/vstate", "params": {
+        "a": { "eyebrow": "What gets measured", "title": "Attendance", "lines": ["Bad scans.", "Butts in seats."], "size": 104, "top": 580, "grad": false },
+        "b": { "eyebrow": "What actually pays", "title": "Pipeline velocity", "lines": ["The financial impact of those", "prospects attending."], "size": 96, "top": 580, "grad": true },
+        "swap": 4.6 } } },
+    { "name": "s04-define-design-execute", "dur": 6.0, "at": 52.8,
+      "scene": { "template": "vertical/vsteps", "params": {
+        "steps": [["01", "Define the outcomes first"], ["02", "Design the system around them"], ["03", "Execute and report"]],
+        "head": ["Good event design", "Three parts"] } } }
+  ]
+}
