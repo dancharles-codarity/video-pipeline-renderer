@@ -153,7 +153,7 @@ test('mcp: handshake, tool list and the job reference', async () => {
   assert.equal(init.json.result.serverInfo.name, 'video-pipeline-renderer');
   assert.equal((await mcp({ jsonrpc: '2.0', method: 'notifications/initialized' })).status, 202);
   const list = await mcp({ jsonrpc: '2.0', id: 2, method: 'tools/list' });
-  assert.deepEqual(list.json.result.tools.map((t) => t.name), ['get_job_reference', 'render_stills', 'render_preview', 'render_master']);
+  assert.deepEqual(list.json.result.tools.map((t) => t.name), ['get_job_reference', 'render_stills', 'render_preview', 'render_master', 'get_render']);
   const ref = await mcp({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'get_job_reference', arguments: {} } });
   assert.match(ref.json.result.content[0].text, /^## Client-neutral by design/);
   assert.match(ref.json.result.content[0].text, /items\[\]\.at/);
@@ -241,4 +241,37 @@ test('mcp: times as a JSON string from a stale schema still works', async () => 
   const job = { format: 'landscape', items: [{ name: 'x', at: 0, dur: 1, transparent: true, scene: { code: "kit.scene('g',{init(kit){kit.stage.append(kit.h('<p style=\"color:#fff;font-size:80px\">x</p>'))},render(){}});" } }] };
   const bad = await mcp({ jsonrpc: '2.0', id: 9, method: 'tools/call', params: { name: 'render_stills', arguments: { job, times: 'soon' } } });
   assert.match(bad.json.result.content[0].text, /times must be a list of seconds/);
+});
+
+test('background render: starts at once, then reports done with its files', async () => {
+  const { startJob, loadJob } = await import('../src/service.js');
+  const code = `kit.scene('g',{init(kit){kit.stage.append(kit.h('<p class="x" style="color:#fff;font-size:80px">x</p>'));this.x=Q(kit,'.x')},render(t){this.x.opacity=1}});`;
+  const started = await startJob({ op: 'master', job: { ...T1, items: [{ name: 'bg', at: 0, dur: 0.5, transparent: true, scene: { code } }] } });
+  assert.equal(started.status, 'running');
+  let rec;
+  for (let i = 0; i < 120; i++) {
+    rec = await loadJob(started.job_id);
+    if (rec.status !== 'running') break;
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  assert.equal(rec.status, 'done', rec.error);
+  assert.equal(rec.files[0].file, 'bg.mov');
+  await assert.rejects(startJob({ op: 'master', job: { items: [] } }), /at least one item/);
+});
+
+test('mcp: get_render with an unknown id is a readable error', async () => {
+  const { mcp } = await import('../src/mcp.js');
+  const r = await mcp({ jsonrpc: '2.0', id: 11, method: 'tools/call', params: { name: 'get_render', arguments: { job_id: '00000000-0000-0000-0000-000000000000' } } });
+  assert.equal(r.json.result.isError, true);
+  assert.match(r.json.result.content[0].text, /no render/);
+});
+
+test('scenes: a var() gradient clipped to text survives render() changing the element', async () => {
+  const tokens = { color: { tokens: [{ name: 'c1', value: '#00C8FF' }, { name: 'c2', value: '#8B30CC' }] } };
+  const code = `kit.scene('g',{init(kit){kit.stage.append(kit.h('<div style="position:absolute;inset:0;background:#060614"><p class="f" style="position:absolute;margin:0;left:200px;top:300px;font-size:200px;background:linear-gradient(90deg,var(--c1),var(--c2));-webkit-background-clip:text;background-clip:text;color:transparent">$4.7M</p></div>'));this.f=Q(kit,'.f')},render(t){this.f.opacity=1;this.f.transform='translateY(0px)'}});`;
+  const job = await prepareJob({ format: 'landscape', design: { tokens }, items: [{ name: 'grad', at: 0, dur: 1, scene: { code } }] }, dir, { remote: true });
+  const [r] = await stills(job, { outDir: join(dir, 'out-grad'), times: [0.5] });
+  const stats = execFileSync('sh', ['-c', `ffmpeg -hide_banner -i '${r.reviews[0]}' -vf crop=1920:300:0:300,format=yuv444p,signalstats,metadata=print -f null - 2>&1`], { encoding: 'utf8' });
+  const ymax = Number(stats.match(/YMAX=(\d+)/)[1]);
+  assert.ok(ymax > 60, `gradient figure should be visible, brightest pixel ${ymax}`);
 });

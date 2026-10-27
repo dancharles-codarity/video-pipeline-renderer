@@ -59,39 +59,88 @@ function outputs(op, result) {
   return result.map((r) => r.file);
 }
 
-// Uploads to the project's Blob store. A public store gives plain URLs; a
-// private store gives presigned links that expire after LINK_DAYS.
-async function toBlob(files) {
+// The store's access, found on first use: a public store gives plain URLs, a
+// private one presigned links that expire after LINK_DAYS.
+let blobAccess = process.env.VPR_BLOB_ACCESS;
+
+async function blobPut(pathname, body, contentType) {
   const blob = await import('@vercel/blob');
+  const put = (access) => blob.put(pathname, body, { access, contentType, addRandomSuffix: false, allowOverwrite: true });
+  if (!blobAccess) {
+    try {
+      const done = await put('public');
+      blobAccess = 'public';
+      return done;
+    } catch (e) {
+      if (!/private/i.test(e.message)) throw e;
+      blobAccess = 'private';
+    }
+  }
+  return put(blobAccess);
+}
+
+async function blobLink(put) {
+  if (blobAccess !== 'private') return { url: put.url };
+  const blob = await import('@vercel/blob');
+  const signed = await blob.issueSignedToken({ pathname: put.pathname, operations: ['get'], validUntil: Date.now() + LINK_DAYS * 86400000 });
+  const { presignedUrl } = await blob.presignUrl(signed, { operation: 'get', pathname: put.pathname, access: 'private' });
+  return { url: presignedUrl, expires: new Date(signed.validUntil).toISOString() };
+}
+
+async function toBlob(files) {
   const run = randomUUID();
-  let access = process.env.VPR_BLOB_ACCESS;
-  const upload = async (f, how) => blob.put(`vpr/${run}/${basename(f)}`, readFileSync(f), {
-    access: how, contentType: MIME[f.slice(f.lastIndexOf('.'))], addRandomSuffix: false,
-  });
   const out = [];
   for (const f of files) {
-    let put;
-    if (!access) {
-      try {
-        put = await upload(f, 'public');
-        access = 'public';
-      } catch (e) {
-        if (!/private/i.test(e.message)) throw e;
-        access = 'private';
-      }
-    }
-    put ??= await upload(f, access);
-    let url = put.url;
-    let expires;
-    if (access === 'private') {
-      const validUntil = Date.now() + LINK_DAYS * 86400000;
-      const signed = await blob.issueSignedToken({ pathname: put.pathname, operations: ['get'], validUntil });
-      url = (await blob.presignUrl(signed, { operation: 'get', pathname: put.pathname, access: 'private' })).presignedUrl;
-      expires = new Date(signed.validUntil).toISOString();
-    }
-    out.push({ file: basename(f), url, bytes: statSync(f).size, ...(expires ? { expires } : {}) });
+    const put = await blobPut(`vpr/${run}/${basename(f)}`, readFileSync(f), MIME[f.slice(f.lastIndexOf('.'))]);
+    out.push({ file: basename(f), bytes: statSync(f).size, ...(await blobLink(put)) });
   }
   return out;
+}
+
+// Background jobs: a full-res render can take longer than a client waits for
+// one tool call, so it runs after the reply and its record is polled. Records
+// live in the Blob store (any instance can read them) or, without one, in memory.
+const memoryJobs = new Map();
+
+async function saveJob(id, record) {
+  if (!blobConfigured()) return void memoryJobs.set(id, record);
+  await blobPut(`vpr/jobs/${id}.json`, JSON.stringify(record), 'application/json');
+}
+
+export async function loadJob(id) {
+  if (!/^[0-9a-f-]{36}$/.test(String(id))) throw new HttpError(400, 'job_id is the id a background render returned');
+  if (!blobConfigured()) return memoryJobs.get(id) ?? null;
+  const blob = await import('@vercel/blob');
+  for (const access of blobAccess ? [blobAccess] : ['private', 'public']) {
+    try {
+      const got = await blob.get(`vpr/jobs/${id}.json`, { access, useCache: false });
+      if (got) { blobAccess ??= access; return JSON.parse(await new Response(got.stream).text()); }
+    } catch (e) {
+      if (!/private|public|access/i.test(e.message)) throw e;
+    }
+  }
+  return null;
+}
+
+// Starts `body` in the background and returns its id at once. The job is
+// checked first, so a bad job is refused now rather than found later.
+export async function startJob(body, opts = {}) {
+  try {
+    await prepareJob(body?.job, null, { remote: true });
+  } catch (e) {
+    throw new HttpError(400, e.message);
+  }
+  const id = randomUUID();
+  const startedAt = new Date().toISOString();
+  await saveJob(id, { status: 'running', op: body.op, startedAt });
+  const work = handle(body, opts)
+    .then((out) => saveJob(id, { status: 'done', op: body.op, startedAt, finishedAt: new Date().toISOString(), ...out }))
+    .catch((e) => saveJob(id, { status: 'error', op: body.op, startedAt, error: e.message }));
+  if (process.env.VERCEL) {
+    const { waitUntil } = await import('@vercel/functions');
+    waitUntil(work); // keeps the function alive after the reply, up to its duration limit
+  }
+  return { job_id: id, status: 'running', startedAt };
 }
 
 async function deliver(files, op, { links }) {

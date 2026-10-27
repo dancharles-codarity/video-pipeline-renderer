@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const HELPERS = readFileSync(join(ROOT, 'kit', 'helpers.js'), 'utf8');
+const SETTLE = readFileSync(join(ROOT, 'kit', 'settle-vars.js'), 'utf8');
 
 const MIME = {
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif',
@@ -34,7 +35,7 @@ export function buildFilm(item, fmt, design, assets) {
     modules: [
       { name: 'scenes.json', kind: 'json', text: JSON.stringify(scenes) },
       { name: 'base.css', kind: 'css', text: design.css },
-      { name: 'scene-g.js', kind: 'js', text: helpers + item.code },
+      { name: 'scene-g.js', kind: 'js', text: SETTLE + '\n' + helpers + item.code },
     ],
     assets: assets.map((a) => ({ name: a.name, mime: mimeOf(a.name), base64: a.bytes.toString('base64') })),
   };

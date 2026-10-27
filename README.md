@@ -129,7 +129,7 @@ kit.scene('g', {
 });
 ```
 
-Style with the design system's variables and classes, not hard-coded values, so the same scene works for any client.
+Style with the design system's variables and classes, not hard-coded values, so the same scene works for any client. Inline `var()` is safe everywhere, gradients clipped to text included: after `init`, the renderer resolves inline `var()` values to concrete ones (`kit/settle-vars.js`), because Chromium otherwise drops a `background` shorthand containing `var()` from the frame once `render` changes the element.
 
 Fonts come from the design system, never from `@font-face` rules with an http `url()` (the player rejects those and silently falls back). Keep transparent scrims small: a large semi-transparent area makes overlay masters of 100 MB or more. On vertical, the usable band is roughly y200 to y1350, and a full-frame card renders above captions, so design it to read without them.
 
@@ -185,7 +185,10 @@ Add it as a custom connector with the URL `https://video-pipeline-renderer.verce
 | `get_job_reference` | Returns the job format (this README's "Client-neutral by design" through "Scenes"), so agents write jobs from the same source of truth |
 | `render_stills` | Stills per graphic; returns links plus each contact sheet as an image the agent can look at |
 | `render_preview` | Preview clips; returns links plus a strip of frames (25, 50, 75 percent of each window) as an image |
-| `render_master` | Full-res files for placing in Descript; returns links |
+| `render_master` | Starts the full-res render of each graphic, for placing in Descript, in the background; returns a `job_id` and an estimated time at once |
+| `get_render` | The state of a background render: running (and for how long), done (with the links) or failed (with the reason) |
+
+A full-res render takes about 10 s per second of graphic, longer than many clients wait for one tool call (60 s is common), so it runs after the reply and keeps the function alive with `waitUntil` up to the 300 s limit; its record is kept in the Blob store under `vpr/jobs/`, so any instance can answer `get_render`.
 
 Every output goes to the project's Blob store and comes back as a link. A public store gives plain URLs; a private store gives presigned links valid for `VPR_LINK_DAYS` days (default 7). A failed render comes back as a tool result marked as an error, with the reason, so the agent can fix the job and retry.
 
@@ -213,6 +216,7 @@ src/service.js          HTTP handler, auth, delivery
 src/remote.js           CLI side of --remote
 src/mcp.js              MCP tools and JSON-RPC dispatch
 kit/helpers.js          client-neutral animation helpers
+kit/settle-vars.js      resolves inline var() after init (always prepended)
 examples/sample/        a made-up design system, two scenes and a job
 vendor/motion/          the Motion player files (see its README)
 assets/timecode.ttf     Jost, for the preview timecode

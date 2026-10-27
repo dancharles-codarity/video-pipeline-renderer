@@ -6,3 +6,4 @@ function slide(s, t, t0, d, dx) { d = d || 0.6; dx = dx == null ? -36 : dx; cons
 function fade(s, t, t0, d) { const p = seg(t, t0, t0 + (d || 0.4)); s.opacity = (+s.opacity) * (1 - ei(p)); }
 function bar(s, t, t0, d) { s.transform = 'scaleX(' + eo(seg(t, t0, t0 + (d || 0.5))) + ')'; }
 function Q(kit, sel) { return kit.stage.querySelector(sel).style; }
+

@@ -4,7 +4,7 @@
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { handle, HttpError } from './service.js';
+import { handle, HttpError, loadJob, startJob } from './service.js';
 import { ffmpeg } from './ffmpeg.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -21,7 +21,7 @@ export function jobReference() {
 
 const INSTRUCTIONS = `Cheap previews of motion graphics and B-roll over a client's real footage, before anything is placed in Descript. Descript renders the finished video; this never does.
 
-Order of use, cheapest first: render_stills (layout, type, text over the face, caption clearance), then render_preview (does the reveal land on the right word, does the B-roll sit right), then render_master only once a graphic is approved, for the file that gets placed.
+Order of use, cheapest first: render_stills (layout, type, text over the face, caption clearance), then render_preview (does the reveal land on the right word, does the B-roll sit right), then render_master only once a graphic is approved, for the file that gets placed. render_master runs in the background: it returns a job_id, and get_render returns the links when it is done.
 
 Each call takes a job: the format, the client's design system (tokens.json from their Design System artifact, fonts, motion CSS, logos), the footage URL on Bunny, and the items with their composition-time placements. Call get_job_reference once before writing a first job. Nothing about any client is stored here: every job brings its own design system. Footage and assets must be URLs (Bunny) or data: URIs; scene code goes inline.
 
@@ -114,11 +114,54 @@ const TOOLS = [
   },
   {
     name: 'render_master',
-    description: 'The full-resolution, full-fps file of each named graphic, for placing in Descript: qtrle/argb .mov for transparent overlays, libx264 .mp4 for full-frame cards. Only once the graphic is approved. Returns links.',
+    description: 'Starts the full-resolution, full-fps render of each named graphic, for placing in Descript: qtrle/argb .mov for transparent overlays, libx264 .mp4 for full-frame cards. Only once the graphic is approved. It runs in the background (about 10 s per second of graphic) and returns a job_id at once; call get_render with it for the links.',
     inputSchema: { type: 'object', properties: { job: JOB, names: NAMES }, required: ['job'] },
     annotations: { readOnlyHint: true, openWorldHint: true },
   },
+  {
+    name: 'get_render',
+    description: 'The state of a background render started by render_master: running (with how long it has run), done (with the links), or failed (with the reason). Call it again while it is running.',
+    inputSchema: { type: 'object', properties: { job_id: { type: 'string', description: 'The job_id render_master returned.' } }, required: ['job_id'] },
+    annotations: { readOnlyHint: true },
+  },
 ];
+
+// Full-res frames take about a third of a second each on the service.
+const SECONDS_PER_FRAME = 0.35;
+
+function estimateSeconds(job, names) {
+  const items = (job?.items ?? []).filter((i) => (i.type ?? (i.src ? 'broll' : 'graphic')) === 'graphic' && (!names?.length || names.includes(i.name)));
+  return Math.round(10 + items.reduce((n, i) => n + (Number(i.dur) || 0) * 30 * SECONDS_PER_FRAME, 0));
+}
+
+// The text and images an agent gets for a finished render.
+function resultContent(out) {
+  const summary = { op: out.op, seconds: Math.round(out.ms / 100) / 10, tmpFreeMB: out.tmpFreeMB, result: out.result, files: out.files };
+  const items = Array.isArray(out.result) ? out.result : [];
+  const notes = [...(out.warnings ?? []).map((w) => `design: ${w}`),
+    ...items.flatMap((r) => [...(r.warnings ?? []), ...(r.problems ?? [])].map((w) => `${r.name}: ${w}`))];
+  const content = [];
+  if (notes.length) content.push({ type: 'text', text: 'Check before going on:\n' + notes.map((n) => '- ' + n).join('\n') });
+  content.push({ type: 'text', text: JSON.stringify(summary, null, 2) });
+  for (const img of out.extra ?? []) {
+    content.push({ type: 'text', text: out.op === 'stills' ? `Contact sheet: ${img.name}` : `Frames early, midway and late in the item: ${img.name}` });
+    content.push({ type: 'image', data: img.png, mimeType: 'image/png' });
+  }
+  return content;
+}
+
+async function getRender(jobId) {
+  const rec = await loadJob(jobId);
+  if (!rec) return { isError: true, content: [{ type: 'text', text: `no render with job_id ${jobId}` }] };
+  const ran = Math.round((Date.now() - Date.parse(rec.startedAt)) / 1000);
+  if (rec.status === 'running') {
+    // The function's duration limit is 300 s; past that the render cannot still be going.
+    if (ran > 320) return { isError: true, content: [{ type: 'text', text: `render ${jobId} stopped without finishing (${ran} s since it started); start it again with fewer items` }] };
+    return { content: [{ type: 'text', text: `still rendering, ${ran} s so far; call get_render again shortly` }] };
+  }
+  if (rec.status === 'error') return { isError: true, content: [{ type: 'text', text: `render failed: ${rec.error}` }] };
+  return { content: resultContent(rec) };
+}
 
 const png64 = (f) => readFileSync(f).toString('base64');
 
@@ -141,23 +184,19 @@ export async function inspect(op, result) {
 
 async function callTool(name, args = {}) {
   if (name === 'get_job_reference') return { content: [{ type: 'text', text: jobReference() }] };
+  if (name === 'get_render') return getRender(args.job_id);
   const op = { render_stills: 'stills', render_preview: 'preview', render_master: 'master' }[name];
   if (!op) throw Object.assign(new Error(`unknown tool ${name}`), { rpc: -32602 });
   const { job, names, fps, scale, pad, reel, timecode, times } = args;
+  const body = { op, job, names, options: { fps, scale, pad, reel, timecode, times } };
   try {
-    const out = await handle({ op, job, names, options: { fps, scale, pad, reel, timecode, times } }, { links: true, inspect });
-    const summary = { op, seconds: Math.round(out.ms / 100) / 10, tmpFreeMB: out.tmpFreeMB, result: out.result, files: out.files };
-    const items = Array.isArray(out.result) ? out.result : [];
-    const notes = [...(out.warnings ?? []).map((w) => `design: ${w}`),
-      ...items.flatMap((r) => [...(r.warnings ?? []), ...(r.problems ?? [])].map((w) => `${r.name}: ${w}`))];
-    const content = [];
-    if (notes.length) content.push({ type: 'text', text: 'Check before going on:\n' + notes.map((n) => '- ' + n).join('\n') });
-    content.push({ type: 'text', text: JSON.stringify(summary, null, 2) });
-    for (const img of out.extra ?? []) {
-      content.push({ type: 'text', text: op === 'stills' ? `Contact sheet: ${img.name}` : `Frames early, midway and late in the item: ${img.name}` });
-      content.push({ type: 'image', data: img.png, mimeType: 'image/png' });
+    if (op === 'master') {
+      const started = await startJob(body, { links: true });
+      const eta = estimateSeconds(job, names);
+      return { content: [{ type: 'text', text: JSON.stringify({ ...started, estimatedSeconds: eta, next: `call get_render with this job_id in about ${eta} s` }, null, 2) }] };
     }
-    return { content };
+    const out = await handle(body, { links: true, inspect });
+    return { content: resultContent({ op, ...out }) };
   } catch (e) {
     // A failed render is a result the model should read, not a protocol error.
     return { isError: true, content: [{ type: 'text', text: e instanceof HttpError ? e.message : `render failed: ${e.message}` }] };
