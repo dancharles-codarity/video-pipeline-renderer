@@ -129,7 +129,7 @@ Remote jobs are stricter than local ones, so a request can never read files off 
 
 A request carrying a full design system with eight embedded fonts is about 0.6 MB, well inside Vercel's 4.5 MB request limit.
 
-Environment: `VPR_TOKEN` (required; with no token every request is refused), `BLOB_READ_WRITE_TOKEN` (optional), `VPR_MEDIA_HOSTS` (optional host allowlist). The function needs Vercel's 300 s duration and 3 GB memory (`vercel.json`).
+Environment: `VPR_TOKEN` (required; with no token every request is refused), `BLOB_READ_WRITE_TOKEN` (optional), `VPR_MEDIA_HOSTS` (optional host allowlist). The function runs with a 300 s limit (`vercel.json`). `package.json` approves `ffmpeg-static`'s install script (`allowScripts`), which npm 11 otherwise skips, leaving the function with no ffmpeg.
 
 On Vercel the renderer uses `@sparticuz/chromium` (Chromium 153, matched to `playwright-core` 1.63) and `ffmpeg-static`. Two things that differ from a normal Chromium, both handled in `src/browser.js`: its `--disable-web-security` flag stops the player's sandboxed iframe from loading a film, so it is dropped; and it runs `--single-process`, where closing a browser context kills the browser, so one context stays open for the whole run.
 
