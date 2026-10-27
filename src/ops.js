@@ -101,7 +101,8 @@ export async function stills(job, { names, outDir, times: at, concurrency = 3, l
       const tw = W >= H ? 640 : 360;
       const ins = reviews.flatMap((r) => ['-i', r]);
       const scaled = reviews.map((_, i) => `[${i}:v]scale=${tw}:-2[s${i}]`).join(';');
-      const stack = reviews.map((_, i) => `[s${i}]`).join('') + `hstack=inputs=${reviews.length}[o]`;
+      // hstack needs two or more inputs; one still is its own sheet.
+      const stack = reviews.length > 1 ? reviews.map((_, i) => `[s${i}]`).join('') + `hstack=inputs=${reviews.length}[o]` : '[s0]null[o]';
       await ffmpeg([...ins, '-filter_complex', `${scaled};${stack}`, '-map', '[o]', '-frames:v', '1', sheet]);
       log(`${item.name}: ${times.length} stills, sheet ${sheet}`);
       // A scene that draws nothing loads without an error, so say so here.

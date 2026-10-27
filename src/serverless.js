@@ -12,7 +12,7 @@ const TMP = '/tmp';
 // Our temp folders, Playwright's profiles, Chromium's shared-memory files
 // (hidden, kept in /tmp because of --disable-dev-shm-usage, and left behind
 // when a single-process Chromium dies) and crash dumps.
-const LEFTOVERS = /^(playwright_chromiumdev_profile-|playwright-artifacts-|vpr-|vpr-out-|frames-|\.org\.chromium\.|\.com\.google\.Chrome\.|core(\.\d+)?$|Crashpad)/;
+const LEFTOVERS = /^(playwright_chromiumdev_profile-|playwright-artifacts-|vpr-|vpr-out-|frames-|\.org\.chromium\.|\.com\.google\.Chrome\.|core$|core\.|Crashpad)/;
 
 export function totalMB(dir = TMP) {
   try {
@@ -56,7 +56,7 @@ export function sweep() {
 function sizeOf(path) {
   try {
     const st = lstatSync(path);
-    if (!st.isDirectory()) return st.size;
+    if (!st.isDirectory()) return st.blocks * 512; // blocks used: core dumps are sparse
     return readdirSync(path).reduce((n, f) => n + sizeOf(join(path, f)), 0);
   } catch {
     return 0;

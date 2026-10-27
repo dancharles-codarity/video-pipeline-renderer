@@ -2,7 +2,7 @@
 // entry exposes window.__animation: load(files), frame(t, {scale}), consoleLog().
 // Every frame comes from the same renderer the Motion artifact uses, so a still
 // here is the frame Export would produce.
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -27,6 +27,16 @@ function localChromium() {
     .flatMap((d) => ['chrome-linux64', 'chrome-linux'].map((p) => join(base, d, p, 'chrome'))).find(existsSync);
 }
 
+// The single-process Chromium often dies on SIGTRAP (on shutdown, or when
+// short of shared memory), and Vercel writes each crash's core dump into /tmp:
+// two dumps took 300 MB of the 525. Launch it through a shell that sets the
+// core size limit to zero, so a crash costs nothing on disk.
+function noCoreDumps(exe) {
+  const wrapper = `${exe}-nocore`;
+  if (!existsSync(wrapper)) writeFileSync(wrapper, `#!/bin/sh\nulimit -c 0\nexec '${exe}' "$@"\n`, { mode: 0o755 });
+  return wrapper;
+}
+
 async function launch() {
   const { chromium } = await import('playwright-core');
   if (process.env.VERCEL) {
@@ -35,7 +45,7 @@ async function launch() {
     // the film, and would loosen the sandbox anyway, so it is dropped.
     const sparticuz = (await import('@sparticuz/chromium')).default;
     const args = sparticuz.args.filter((a) => a !== '--disable-web-security');
-    return chromium.launch({ executablePath: await sparticuz.executablePath(), args: [...args, ...ARGS] });
+    return chromium.launch({ executablePath: noCoreDumps(await sparticuz.executablePath()), args: [...args, ...ARGS] });
   }
   const exe = localChromium();
   return chromium.launch({ ...(exe ? { executablePath: exe } : {}), args: ARGS });

@@ -21,12 +21,6 @@ const MIN_FREE_MB = 120;
 // One job at a time per instance: the serverless Chromium is single-process and
 // /tmp is shared, so two at once compete for both.
 let queue = Promise.resolve();
-// Set when this instance should exit after answering (see run()).
-let recycle = false;
-export function recycleAfterReply(res) {
-  if (!process.env.VERCEL) return;
-  res.on('finish', () => { if (recycle) setTimeout(() => process.exit(0), 50); });
-}
 function exclusive(fn) {
   const run = queue.then(fn, fn);
   queue = run.catch(() => {});
@@ -143,10 +137,8 @@ async function run(body, { links = false, inspect } = {}) {
   if (free !== null && free < MIN_FREE_MB) {
     const report = tmpReport();
     console.error('vpr: low /tmp', free, 'MB;', report);
-    // This instance cannot recover on its own: answer, then let it exit so the
-    // platform starts a fresh one for the next call.
-    recycle = true;
-    throw new HttpError(503, `only ${free} MB free in /tmp after cleanup (needs ${MIN_FREE_MB}). This instance is being replaced; call again in a few seconds. Diagnostics: ${report}`);
+    // Exiting does not help: the platform restarts the process on the same /tmp.
+    throw new HttpError(503, `only ${free} MB free in /tmp after cleanup (needs ${MIN_FREE_MB}); this is a fault in the service, report this message. Diagnostics: ${report}`);
   }
   const outDir = mkdtempSync(join(tmpdir(), 'vpr-out-'));
   let timer;
@@ -179,6 +171,9 @@ async function run(body, { links = false, inspect } = {}) {
   } finally {
     clearTimeout(timer);
     rmSync(outDir, { recursive: true, force: true });
+    // Clear up after the job too, so the next caller starts from a clean /tmp.
+    await closeAll();
+    sweep();
     if (process.env.VERCEL) console.log(`vpr: /tmp ${freeMB()} of ${totalMB()} MB free after ${op}; ${tmpReport()}`);
   }
 }

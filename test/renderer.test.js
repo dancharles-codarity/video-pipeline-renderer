@@ -232,6 +232,8 @@ test('stills: explicit times check exact moments', async () => {
   const job = await prepareJob(JOB, dir);
   const [r] = await stills(job, { names: ['tag'], outDir: join(dir, 'out-times'), times: [0.2, 0.4, 9] });
   assert.deepEqual(r.times, [0.2, 0.4]);
+  const [one] = await stills(job, { names: ['tag'], outDir: join(dir, 'out-one'), times: [0.3] });
+  assert.ok(existsSync(one.sheet));
 });
 
 test('mcp: times as a JSON string from a stale schema still works', async () => {

@@ -1,5 +1,5 @@
 // The MCP connector endpoint: POST /api/mcp, token as a Bearer header or ?token=.
-import { authorised, tokenFrom, recycleAfterReply } from '../src/service.js';
+import { authorised, tokenFrom } from '../src/service.js';
 import { useBundledBinaries } from '../src/ffmpeg.js';
 import { mcp } from '../src/mcp.js';
 
@@ -15,7 +15,6 @@ export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).end();
   ready ??= useBundledBinaries();
   await ready;
-  recycleAfterReply(res);
   const { status, json } = await mcp(req.body);
   if (status === 202) return res.status(202).end();
   res.status(status).json(json);
