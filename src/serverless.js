@@ -14,6 +14,15 @@ const TMP = '/tmp';
 // when a single-process Chromium dies) and crash dumps.
 const LEFTOVERS = /^(playwright_chromiumdev_profile-|playwright-artifacts-|vpr-|vpr-out-|frames-|\.org\.chromium\.|\.com\.google\.Chrome\.|core(\.\d+)?$|Crashpad)/;
 
+export function totalMB(dir = TMP) {
+  try {
+    const s = statfsSync(dir);
+    return Math.round((s.blocks * s.bsize) / 1048576);
+  } catch {
+    return null;
+  }
+}
+
 export function freeMB(dir = TMP) {
   try {
     const s = statfsSync(dir);

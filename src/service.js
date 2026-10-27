@@ -8,7 +8,7 @@ import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { prepareJob } from './job.js';
 import { stills, preview, master } from './ops.js';
 import { closeAll } from './browser.js';
-import { freeMB, sweep, tmpReport } from './serverless.js';
+import { freeMB, sweep, tmpReport, totalMB } from './serverless.js';
 
 const OPS = { stills, preview, master };
 const INLINE_LIMIT = 3.5 * 1024 * 1024; // under Vercel's 4.5 MB response cap once base64'd
@@ -115,6 +115,20 @@ export function handle(body, opts = {}) {
   return exclusive(() => run(body, opts));
 }
 
+// `times` may arrive as an array, a JSON string or a comma list, depending on
+// how current the caller's copy of the tool schema is.
+function asTimes(v) {
+  if (v == null || v === '') return undefined;
+  let list = v;
+  if (typeof v === 'string') {
+    try { list = JSON.parse(v); } catch { list = v.split(','); }
+  }
+  if (!Array.isArray(list)) list = [list];
+  const nums = list.map(Number);
+  if (nums.some((n) => !Number.isFinite(n))) throw new HttpError(400, 'times must be a list of seconds, e.g. [0.2, 0.4]');
+  return nums;
+}
+
 async function run(body, { links = false, inspect } = {}) {
   const { op, job, names = [], options = {} } = body ?? {};
   if (!OPS[op]) throw new HttpError(400, 'op must be stills, preview or master');
@@ -137,7 +151,8 @@ async function run(body, { links = false, inspect } = {}) {
   const outDir = mkdtempSync(join(tmpdir(), 'vpr-out-'));
   let timer;
   try {
-    const { fps, scale, pad, reel, timecode, times } = options;
+    const { fps, scale, pad, reel, timecode } = options;
+    const times = asTimes(options.times);
     const t0 = Date.now();
     // One film at a time: the serverless Chromium runs --single-process, so a
     // second film gains nothing and doubles peak memory (two full-res films
@@ -164,5 +179,6 @@ async function run(body, { links = false, inspect } = {}) {
   } finally {
     clearTimeout(timer);
     rmSync(outDir, { recursive: true, force: true });
+    if (process.env.VERCEL) console.log(`vpr: /tmp ${freeMB()} of ${totalMB()} MB free after ${op}; ${tmpReport()}`);
   }
 }

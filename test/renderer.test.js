@@ -233,3 +233,10 @@ test('stills: explicit times check exact moments', async () => {
   const [r] = await stills(job, { names: ['tag'], outDir: join(dir, 'out-times'), times: [0.2, 0.4, 9] });
   assert.deepEqual(r.times, [0.2, 0.4]);
 });
+
+test('mcp: times as a JSON string from a stale schema still works', async () => {
+  const { mcp } = await import('../src/mcp.js');
+  const job = { format: 'landscape', items: [{ name: 'x', at: 0, dur: 1, transparent: true, scene: { code: "kit.scene('g',{init(kit){kit.stage.append(kit.h('<p style=\"color:#fff;font-size:80px\">x</p>'))},render(){}});" } }] };
+  const bad = await mcp({ jsonrpc: '2.0', id: 9, method: 'tools/call', params: { name: 'render_stills', arguments: { job, times: 'soon' } } });
+  assert.match(bad.json.result.content[0].text, /times must be a list of seconds/);
+});
