@@ -8,7 +8,7 @@ import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { prepareJob } from './job.js';
 import { stills, preview, master } from './ops.js';
 import { closeAll } from './browser.js';
-import { freeMB, sweep } from './serverless.js';
+import { freeMB, sweep, tmpReport } from './serverless.js';
 
 const OPS = { stills, preview, master };
 const INLINE_LIMIT = 3.5 * 1024 * 1024; // under Vercel's 4.5 MB response cap once base64'd
@@ -21,6 +21,12 @@ const MIN_FREE_MB = 120;
 // One job at a time per instance: the serverless Chromium is single-process and
 // /tmp is shared, so two at once compete for both.
 let queue = Promise.resolve();
+// Set when this instance should exit after answering (see run()).
+let recycle = false;
+export function recycleAfterReply(res) {
+  if (!process.env.VERCEL) return;
+  res.on('finish', () => { if (recycle) setTimeout(() => process.exit(0), 50); });
+}
 function exclusive(fn) {
   const run = queue.then(fn, fn);
   queue = run.catch(() => {});
@@ -121,17 +127,22 @@ async function run(body, { links = false, inspect } = {}) {
   sweep();
   const free = freeMB();
   if (free !== null && free < MIN_FREE_MB) {
-    throw new HttpError(503, `only ${free} MB free in /tmp after cleanup (needs ${MIN_FREE_MB}); try again in a minute, a fresh instance will pick it up`);
+    const report = tmpReport();
+    console.error('vpr: low /tmp', free, 'MB;', report);
+    // This instance cannot recover on its own: answer, then let it exit so the
+    // platform starts a fresh one for the next call.
+    recycle = true;
+    throw new HttpError(503, `only ${free} MB free in /tmp after cleanup (needs ${MIN_FREE_MB}). This instance is being replaced; call again in a few seconds. Diagnostics: ${report}`);
   }
   const outDir = mkdtempSync(join(tmpdir(), 'vpr-out-'));
   let timer;
   try {
-    const { fps, scale, pad, reel, timecode } = options;
+    const { fps, scale, pad, reel, timecode, times } = options;
     const t0 = Date.now();
     // One film at a time: the serverless Chromium runs --single-process, so a
     // second film gains nothing and doubles peak memory (two full-res films
     // at once crashed it on Vercel).
-    const work = OPS[op](prepared, { names, outDir, fps, scale, pad, reel, timecode, concurrency: 1 });
+    const work = OPS[op](prepared, { names, outDir, fps, scale, pad, reel, timecode, times, concurrency: 1 });
     const late = new Promise((_, reject) => {
       timer = setTimeout(() => reject(new HttpError(504, `stopped after ${BUDGET_S} s; render fewer items per call`)), BUDGET_S * 1000);
     });
@@ -149,7 +160,7 @@ async function run(body, { links = false, inspect } = {}) {
     const files = await deliver(outputs(op, result), op, { links });
     const extra = inspect ? await inspect(op, result) : undefined;
     const strip = (o) => JSON.parse(JSON.stringify(o, (k, v) => (['file', 'sheet', 'reviews', 'reel'].includes(k) ? undefined : v)));
-    return { op, ms: Date.now() - t0, result: strip(result), files, ...(extra ? { extra } : {}) };
+    return { op, ms: Date.now() - t0, warnings: prepared.warnings ?? [], result: strip(result), files, ...(extra ? { extra } : {}) };
   } finally {
     clearTimeout(timer);
     rmSync(outDir, { recursive: true, force: true });

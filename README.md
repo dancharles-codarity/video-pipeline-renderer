@@ -56,7 +56,7 @@ Token values are checked before they reach CSS: anything that could close a rule
 
 ## The job file
 
-One JSON file per video. A source is an http(s) URL, a data: URI, or (local runs only) a path relative to the job file. ffmpeg reads footage URLs over HTTP ranges, so only the window it needs is downloaded.
+One JSON file per video. A source is an http(s) URL, a data: URI, or (local runs only) a path relative to the job file. Over the MCP connector and the HTTP API every source must be a URL or a data: URI and scene code goes inline as `scene.code`; `scene.file` and path-valued `tokens`, `fontBase` and `cssFile` are for local CLI runs (`vpr --remote` inlines them for you). ffmpeg reads footage URLs over HTTP ranges, so only the window it needs is downloaded.
 
 ```json
 {
@@ -80,7 +80,7 @@ One JSON file per video. A source is an http(s) URL, a data: URI, or (local runs
 | Field | Meaning |
 | --- | --- |
 | `format` | `landscape` (1920x1080) or `vertical` (1080x1920), both 30 fps. Sets canvas, still fractions (0.15, 0.5, 0.97 landscape; 0.12, 0.42, 0.62, 0.95 vertical) and the caption zone. |
-| `design` | The client's design system, as above. Optional; without it scenes render in the machine's fonts on black. |
+| `design` | The client's design system, as above. Optional; without it scenes render in a system sans on black. Font files named in `tokens.type.fonts` but not supplied are skipped with a warning, and text falls back along the `type.families` stacks. |
 | `assets` | Per-video images or fonts beyond the design system's, by name. |
 | `base` | The footage to preview over: the latest published render, or raw footage. Composition seconds in `at` are seconds into this file. Optional; without it previews run over grey. |
 | `items[].at` | Placement in composition seconds. |
@@ -89,6 +89,9 @@ One JSON file per video. A source is an http(s) URL, a data: URI, or (local runs
 | `items[].transparent` | Overlay with alpha (`qtrle` master) rather than a full-frame card (`libx264` master). |
 | `items[].type` | `graphic` (default) or `broll`. B-roll takes `src`, `dur` and `in` (offset into the clip). |
 | `items[].z` | Paint order in previews, higher on top (default 0, then by `at`). |
+| `items[].helpers` | `false` leaves out the prepended helpers (see Scenes). |
+
+Stills default to fixed fractions of each graphic's duration; the stills call also takes `times`, seconds into each item, to check an exact moment such as an entrance.
 
 ### Scenes
 
@@ -98,7 +101,8 @@ A scene is one Motion scene with the id `g`, and everything on screen is a pure 
 - `init(kit)` runs once. Build the DOM there and add it to the stage with `kit.stage.append(kit.h('<div ...>...</div>'))`, then keep handles to the styles you will change (`Q(kit, '.selector')` returns an element's `style`).
 - `render(t, kit)` runs for every frame, in any order. It sets styles (opacity, transform, text) from `t` and nothing else. **What it returns is ignored**: returning HTML, or building the DOM in `render`, gives blank frames, and the renderer warns when every still is blank.
 - `t` is seconds into the item; `kit.dur` is its duration. `P` holds `scene.params`.
-- Time helpers from the kit: `seg(t, a, b)` (0 to 1 progress of `t` across `a..b`), `lerp(a, b, p)`, easings `eo`, `ei`, `eob`. Markup helpers: `kit.h(html)`, `kit.esc(text)`, `kit.assets.url(name)`.
+- Names without `kit.` are globals in scene code, from the prepended helpers: `seg`, `lerp`, `eo`, `ei`, `eob`, `rise`, `slide`, `fade`, `bar`, `Q`. Names on `kit` are the player's: `kit.stage`, `kit.h`, `kit.esc`, `kit.assets.url`, `kit.dur`. With `"helpers": false`, take what you need yourself: `const { seg, eo, lerp } = kit;`.
+- Time helpers: `seg(t, a, b)` (0 to 1 progress of `t` across `a..b`), `lerp(a, b, p)`, easings `eo`, `ei`, `eob`. Markup helpers: `kit.h(html)`, `kit.esc(text)`, `kit.assets.url(name)`.
 - The client-neutral helpers in `kit/helpers.js` are prepended to every scene: `rise(style, t, t0, dur, dy)`, `slide(style, t, t0, dur, dx)`, `fade(style, t, t0, dur)`, `bar(style, t, t0, dur)` and `Q`. Set `"helpers": false` on an item to leave them out.
 
 A minimal working scene, a lower third that slides in, reveals its second line and fades out at the end:

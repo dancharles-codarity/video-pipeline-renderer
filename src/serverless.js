@@ -5,7 +5,7 @@
 // takes 200 MB of it, so a few orphans fill it and every later launch crashes.
 // The service renders one job at a time per instance, so at the start of a job
 // nothing of ours should be running and anything left over can go.
-import { readdirSync, readFileSync, rmSync, statfsSync } from 'node:fs';
+import { lstatSync, readdirSync, readFileSync, readlinkSync, rmSync, statSync, statfsSync } from 'node:fs';
 import { join } from 'node:path';
 
 const TMP = '/tmp';
@@ -39,4 +39,39 @@ export function sweep() {
     removed++;
   }
   return { killed, removed };
+}
+
+function sizeOf(path) {
+  try {
+    const st = lstatSync(path);
+    if (!st.isDirectory()) return st.size;
+    return readdirSync(path).reduce((n, f) => n + sizeOf(join(path, f)), 0);
+  } catch {
+    return 0;
+  }
+}
+
+// What is using /tmp: the largest entries (hidden ones included), and files
+// already deleted but still held open by a process, which only df can see.
+export function tmpReport() {
+  const mb = (b) => Math.round(b / 1048576);
+  const entries = readdirSync(TMP).map((n) => [n, sizeOf(join(TMP, n))]).sort((a, b) => b[1] - a[1]).slice(0, 8);
+  const held = [];
+  for (const pid of readdirSync('/proc').filter((p) => /^\d+$/.test(p))) {
+    let fds = [];
+    try { fds = readdirSync(`/proc/${pid}/fd`); } catch { continue; }
+    let bytes = 0, count = 0;
+    for (const fd of fds) {
+      try {
+        const target = readlinkSync(`/proc/${pid}/fd/${fd}`);
+        if (target.startsWith(TMP) && target.endsWith('(deleted)')) { bytes += statSync(`/proc/${pid}/fd/${fd}`).size; count++; }
+      } catch { /* closed meanwhile */ }
+    }
+    if (count) {
+      let cmd = '';
+      try { cmd = readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0')[0]; } catch { /* gone */ }
+      held.push(`pid ${pid}${Number(pid) === process.pid ? ' (this process)' : ''} ${cmd}: ${count} deleted files, ${mb(bytes)} MB`);
+    }
+  }
+  return `largest in /tmp: ${entries.map(([n, b]) => `${n} ${mb(b)} MB`).join(', ')}; held open after deletion: ${held.length ? held.join('; ') : 'none'}`;
 }

@@ -220,3 +220,16 @@ test('service: sweep and free-space check are safe off Vercel', async () => {
   assert.deepEqual(sweep(), { killed: 0, removed: 0 });
   assert.ok(freeMB() > 0);
 });
+
+test('design: font files named but not given are a warning, not a refusal', async () => {
+  const { buildDesign } = await import('../src/design.js');
+  const d = await buildDesign({ tokens: { type: { fonts: [{ family: 'Brand', file: 'fonts/brand.otf', weight: '700' }], families: { body: '"Brand", sans-serif' } } } }, async () => Buffer.alloc(0));
+  assert.match(d.warnings[0], /fonts\/brand\.otf/);
+  assert.doesNotMatch(d.css, /@font-face/);
+});
+
+test('stills: explicit times check exact moments', async () => {
+  const job = await prepareJob(JOB, dir);
+  const [r] = await stills(job, { names: ['tag'], outDir: join(dir, 'out-times'), times: [0.2, 0.4, 9] });
+  assert.deepEqual(r.times, [0.2, 0.4]);
+});

@@ -65,6 +65,7 @@ const JOB = {
           src: { type: 'string', description: 'B-roll: clip URL.' },
           in: { type: 'number', description: 'B-roll: offset into the clip in seconds.' },
           z: { type: 'number', description: 'Paint order in previews, higher on top.' },
+          helpers: { type: 'boolean', description: 'Graphic: false leaves out the prepended helpers (rise, slide, fade, bar, Q, seg, eo, ei, eob, lerp).' },
         },
       },
     },
@@ -84,7 +85,14 @@ const TOOLS = [
   {
     name: 'render_stills',
     description: "Full-resolution stills of each graphic at fixed fractions of its duration, composited over the real frame at its placement when base is given, with the caption zone outlined on vertical. Returns links and the contact sheets as images to look at. About a second per graphic.",
-    inputSchema: { type: 'object', properties: { job: JOB, names: NAMES }, required: ['job'] },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        job: JOB, names: NAMES,
+        times: { type: 'array', items: { type: 'number' }, description: 'Seconds into each item to take stills at, instead of the fixed fractions; e.g. [0.2, 0.4] to check an entrance.' },
+      },
+      required: ['job'],
+    },
     annotations: { readOnlyHint: true, openWorldHint: true },
   },
   {
@@ -120,8 +128,9 @@ export async function inspect(op, result) {
   if (op === 'preview') {
     return Promise.all(result.previews.map(async (p) => {
       const strip = p.file.replace(/\.mp4$/, '-strip.png');
-      const len = p.end - p.start;
-      const at = [0.25, 0.5, 0.75].map((f) => (len * f).toFixed(3));
+      // Sample the item itself, not the padded window: early (inside a typical entrance), middle, late.
+      const off = p.at - p.start, edge = Math.min(0.3, p.dur * 0.1);
+      const at = [off + edge, off + p.dur / 2, off + p.dur - edge].map((t) => t.toFixed(3));
       const ins = at.flatMap((t) => ['-ss', t, '-i', p.file]);
       await ffmpeg([...ins, '-filter_complex', at.map((_, i) => `[${i}:v]scale=480:-2[s${i}]`).join(';') + ';' + at.map((_, i) => `[s${i}]`).join('') + `hstack=inputs=${at.length}[o]`, '-map', '[o]', '-frames:v', '1', strip]);
       return { name: p.name, png: png64(strip) };
@@ -134,17 +143,18 @@ async function callTool(name, args = {}) {
   if (name === 'get_job_reference') return { content: [{ type: 'text', text: jobReference() }] };
   const op = { render_stills: 'stills', render_preview: 'preview', render_master: 'master' }[name];
   if (!op) throw Object.assign(new Error(`unknown tool ${name}`), { rpc: -32602 });
-  const { job, names, fps, scale, pad, reel, timecode } = args;
+  const { job, names, fps, scale, pad, reel, timecode, times } = args;
   try {
-    const out = await handle({ op, job, names, options: { fps, scale, pad, reel, timecode } }, { links: true, inspect });
+    const out = await handle({ op, job, names, options: { fps, scale, pad, reel, timecode, times } }, { links: true, inspect });
     const summary = { op, seconds: Math.round(out.ms / 100) / 10, result: out.result, files: out.files };
     const items = Array.isArray(out.result) ? out.result : [];
-    const notes = items.flatMap((r) => [...(r.warnings ?? []), ...(r.problems ?? [])].map((w) => `${r.name}: ${w}`));
+    const notes = [...(out.warnings ?? []).map((w) => `design: ${w}`),
+      ...items.flatMap((r) => [...(r.warnings ?? []), ...(r.problems ?? [])].map((w) => `${r.name}: ${w}`))];
     const content = [];
     if (notes.length) content.push({ type: 'text', text: 'Check before going on:\n' + notes.map((n) => '- ' + n).join('\n') });
     content.push({ type: 'text', text: JSON.stringify(summary, null, 2) });
     for (const img of out.extra ?? []) {
-      content.push({ type: 'text', text: op === 'stills' ? `Contact sheet: ${img.name}` : `Frames at 25, 50 and 75 percent of the preview window: ${img.name}` });
+      content.push({ type: 'text', text: op === 'stills' ? `Contact sheet: ${img.name}` : `Frames early, midway and late in the item: ${img.name}` });
       content.push({ type: 'image', data: img.png, mimeType: 'image/png' });
     }
     return { content };

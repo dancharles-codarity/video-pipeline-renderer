@@ -85,6 +85,7 @@ export async function prepareJob(job, baseDir, { remote = false } = {}) {
 
   return {
     fmt, fmtName, design, items,
+    warnings: design.warnings,
     assets: [...design.assets, ...extra],
     base: job.base ? mediaPath(job.base, baseDir, remote, 'base') : null,
   };

@@ -71,12 +71,22 @@ export async function buildDesign(design = {}, fetchSource) {
   const values = tokens ? resolveTokens(tokens, design.theme) : new Map();
 
   const faces = [];
+  const warnings = [];
   const fontFile = (file) => {
     if (design.files?.[file]) return design.files[file];
     if (design.fontBase) return design.fontBase.replace(/\/*$/, '/') + file.replace(/^\/+/, '');
-    throw new Error(`no source for font ${file}: give design.fontBase or design.files["${file}"]`);
+    return null;
   };
-  for (const f of tokens?.type?.fonts ?? []) faces.push({ family: f.family, weight: f.weight, style: f.style, src: fontFile(f.file), name: f.file });
+  const missing = [];
+  for (const f of tokens?.type?.fonts ?? []) {
+    const src = fontFile(f.file);
+    if (src) faces.push({ family: f.family, weight: f.weight, style: f.style, src, name: f.file });
+    else missing.push(f.file);
+  }
+  if (missing.length) {
+    // Render anyway: text falls back along the type.families stacks.
+    warnings.push(`no font files given for ${missing.join(', ')}; text uses the fallback fonts in type.families. Pass design.files or design.fontBase for the real faces`);
+  }
   for (const f of design.fonts ?? []) faces.push({ family: f.family, weight: f.weight, style: f.style, src: f.src, name: f.name ?? f.src });
 
   const rules = [];
@@ -125,5 +135,6 @@ export async function buildDesign(design = {}, fetchSource) {
     ground: design.ground ?? values.get('bg-page') ?? '#000000',
     look: tokens?.name ?? 'client design',
     assets,
+    warnings,
   };
 }

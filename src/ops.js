@@ -58,7 +58,7 @@ async function withFilm(renderer, job, item, fn) {
 
 // Stills
 
-export async function stills(job, { names, outDir, concurrency = 3, log = () => {} } = {}) {
+export async function stills(job, { names, outDir, times: at, concurrency = 3, log = () => {} } = {}) {
   const items = select(job, names, 'graphic');
   if (!items.length) throw new Error('stills need at least one graphic');
   mkdirSync(outDir, { recursive: true });
@@ -66,7 +66,11 @@ export async function stills(job, { names, outDir, concurrency = 3, log = () => 
   const renderer = await Renderer.open();
   try {
     return await mapLimit(items, concurrency, (item) => withFilm(renderer, job, item, async (film) => {
-      const times = job.fmt.stills.map((f) => Math.round(item.dur * f * 100) / 100);
+      // Fixed fractions by default; `times` (seconds into the item) checks exact moments, an entrance say.
+      const times = at?.length
+        ? at.filter((t) => t >= 0 && t <= item.dur).map((t) => Math.round(t * 100) / 100)
+        : job.fmt.stills.map((f) => Math.round(item.dur * f * 100) / 100);
+      if (!times.length) throw new Error(`${item.name}: no requested time falls within its ${item.dur} s`);
       const reviews = [];
       let blank = 0;
       for (const t of times) {
@@ -235,7 +239,7 @@ export async function preview(job, { names, outDir, fps, scale, pad, reel = fals
         '-c:v', 'libx264', '-preset', 'veryfast', '-crf', String(PREVIEW_DEFAULTS.crf), '-pix_fmt', 'yuv420p',
         '-t', r3(w.len).toFixed(3), '-movflags', '+faststart', out]);
       log(`${w.target.name}: ${r3(w.start)}s to ${r3(w.start + w.len)}s, ${w.layers.length} layer(s) -> ${out}`);
-      results.push({ name: w.target.name, file: out, start: r3(w.start), end: r3(w.start + w.len), layers: w.layers.map((l) => l.name) });
+      results.push({ name: w.target.name, file: out, start: r3(w.start), end: r3(w.start + w.len), at: w.target.at, dur: w.target.dur, layers: w.layers.map((l) => l.name) });
     }
     let reelFile = null;
     if (reel && results.length > 1) {
