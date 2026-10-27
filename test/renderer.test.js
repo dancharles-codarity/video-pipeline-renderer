@@ -145,3 +145,49 @@ test('design: a token cannot break out of its CSS value', async () => {
   await assert.rejects(buildDesign({ tokens: evil }, async () => Buffer.alloc(0)), /not allowed/);
   await assert.rejects(buildDesign({ css: '.a { background: url(https://evil.example/x.png) }' }, async () => Buffer.alloc(0)), /data: URI/);
 });
+
+test('mcp: handshake, tool list and the job reference', async () => {
+  const { mcp } = await import('../src/mcp.js');
+  const init = await mcp({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 't', version: '0' } } });
+  assert.equal(init.json.result.protocolVersion, '2025-06-18');
+  assert.equal(init.json.result.serverInfo.name, 'video-pipeline-renderer');
+  assert.equal((await mcp({ jsonrpc: '2.0', method: 'notifications/initialized' })).status, 202);
+  const list = await mcp({ jsonrpc: '2.0', id: 2, method: 'tools/list' });
+  assert.deepEqual(list.json.result.tools.map((t) => t.name), ['get_job_reference', 'render_stills', 'render_preview', 'render_master']);
+  const ref = await mcp({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'get_job_reference', arguments: {} } });
+  assert.match(ref.json.result.content[0].text, /^## Client-neutral by design/);
+  assert.match(ref.json.result.content[0].text, /items\[\]\.at/);
+  const unknown = await mcp({ jsonrpc: '2.0', id: 4, method: 'nope' });
+  assert.equal(unknown.json.error.code, -32601);
+});
+
+test('mcp: a bad job comes back as a tool error the model can read', async () => {
+  const { mcp } = await import('../src/mcp.js');
+  const r = await mcp({ jsonrpc: '2.0', id: 5, method: 'tools/call', params: { name: 'render_stills', arguments: { job: { items: [{ name: 'x', dur: 1, at: 0, scene: { file: 'a.js' } }] } } } });
+  assert.equal(r.json.result.isError, true);
+  assert.match(r.json.result.content[0].text, /inline/);
+});
+
+test('mcp: stills and previews come with images to look at', async () => {
+  const { inspect } = await import('../src/mcp.js');
+  const job = await prepareJob(JOB, dir);
+  const out = join(dir, 'out-mcp');
+  const st = await inspect('stills', await stills(job, { names: ['tag'], outDir: out }));
+  assert.equal(st[0].name, 'tag');
+  assert.equal(Buffer.from(st[0].png, 'base64').subarray(1, 4).toString(), 'PNG');
+  const pv = await inspect('preview', await preview(job, { names: ['clip'], outDir: out }));
+  const w = probe(join(out, 'preview-clip-strip.png'), 'stream=width').streams[0].width;
+  assert.equal(w, 1440);
+  assert.equal(pv[0].name, 'clip');
+});
+
+test('auth: header or query token, constant-time compare, refuse when unset', async () => {
+  const { authorised, tokenFrom } = await import('../src/service.js');
+  assert.equal(tokenFrom({ headers: { authorization: 'Bearer abc' } }), 'abc');
+  assert.equal(tokenFrom({ headers: {}, url: '/api/mcp?token=xyz' }), 'xyz');
+  assert.equal(tokenFrom({ headers: {}, query: { token: 'q' } }), 'q');
+  assert.equal(authorised('abc', 'abc'), true);
+  assert.equal(authorised('abd', 'abc'), false);
+  assert.equal(authorised('', ''), false);
+  assert.equal(authorised('anything', undefined), false);
+});

@@ -3,6 +3,10 @@
     "api/render.js": {
       "maxDuration": 300,
       "includeFiles": "{vendor,kit,assets}/**"
+    },
+    "api/mcp.js": {
+      "maxDuration": 300,
+      "includeFiles": "{vendor/**,kit/**,assets/**,README.md,package.json}"
     }
   }
 }

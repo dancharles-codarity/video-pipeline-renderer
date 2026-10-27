@@ -127,15 +127,30 @@ Authorization: Bearer <VPR_TOKEN>
 { "op": "preview", "job": { ...as above... }, "names": ["stage-1-vision"], "options": { "fps": 12, "scale": 0.5, "reel": false } }
 ```
 
-Returns `{ op, ms, result, files }`. Each file is either a `url` (when `BLOB_READ_WRITE_TOKEN` is set, uploaded to Vercel Blob) or inline `base64` (up to about 3.5 MB in total, enough for a few previews or stills).
+Returns `{ op, ms, result, files }`. Each file is a `url` when a Blob store is connected, otherwise inline `base64` (up to about 3.5 MB in total, enough for a few previews or stills).
 
 Remote jobs are stricter than local ones, so a request can never read files off the server: every source (`base`, `src`, tokens, fonts, stylesheet, assets) must be an http(s) URL or a data: URI, and scenes must be inline `code`. `vpr --remote` inlines local design files and scene files for you; footage must already be on Bunny. Set `VPR_MEDIA_HOSTS=codaritymedia.b-cdn.net` to accept URLs from Bunny only.
 
 A request carrying a full design system with eight embedded fonts is about 0.6 MB, well inside Vercel's 4.5 MB request limit.
 
-Environment: `VPR_TOKEN` (required; with no token every request is refused), `BLOB_READ_WRITE_TOKEN` (optional), `VPR_MEDIA_HOSTS` (optional host allowlist). The function runs with a 300 s limit (`vercel.json`). `package.json` approves `ffmpeg-static`'s install script (`allowScripts`), which npm 11 otherwise skips, leaving the function with no ffmpeg.
+Environment: `VPR_TOKEN` (required, store it as a sensitive variable; with no token every request is refused), the Blob store's `BLOB_STORE_ID` (added when the store is connected; required for the MCP connector and full-res renders), `VPR_MEDIA_HOSTS` (host allowlist, e.g. `codaritymedia.b-cdn.net`), `VPR_LINK_DAYS` (private-store link lifetime, default 7), `VPR_BLOB_ACCESS` (`public` or `private`, to skip detection). The function runs with a 300 s limit (`vercel.json`). `package.json` approves `ffmpeg-static`'s install script (`allowScripts`), which npm 11 otherwise skips, leaving the function with no ffmpeg.
 
 On Vercel the renderer uses `@sparticuz/chromium` (Chromium 153, matched to `playwright-core` 1.63) and `ffmpeg-static`. Two things that differ from a normal Chromium, both handled in `src/browser.js`: its `--disable-web-security` flag stops the player's sandboxed iframe from loading a film, so it is dropped; and it runs `--single-process`, where closing a browser context kills the browser, so one context stays open for the whole run.
+
+## The MCP connector
+
+For Cowork, claude.ai and anything else that takes a custom connector, the same service speaks MCP at `/api/mcp` (Streamable HTTP, stateless: one JSON-RPC message per POST, JSON replies).
+
+Add it as a custom connector with the URL `https://video-pipeline-renderer.vercel.app/api/mcp?token=<VPR_TOKEN>`. Custom connectors cannot send headers, so the token rides in the URL, the same pattern as the Bunny Hopper; clients that can send headers use `Authorization: Bearer <VPR_TOKEN>` instead.
+
+| Tool | Does |
+| --- | --- |
+| `get_job_reference` | Returns the job format (this README's "Client-neutral by design" through "Scenes"), so agents write jobs from the same source of truth |
+| `render_stills` | Stills per graphic; returns links plus each contact sheet as an image the agent can look at |
+| `render_preview` | Preview clips; returns links plus a strip of frames (25, 50, 75 percent of each window) as an image |
+| `render_master` | Full-res files for placing in Descript; returns links |
+
+Every output goes to the project's Blob store and comes back as a link. A public store gives plain URLs; a private store gives presigned links valid for `VPR_LINK_DAYS` days (default 7). A failed render comes back as a tool result marked as an error, with the reason, so the agent can fix the job and retry.
 
 ## How it works
 
@@ -149,7 +164,8 @@ The scene code is ours, but the page still runs with the network blocked and onl
 
 ```
 bin/vpr.js              CLI
-api/render.js           Vercel function
+api/render.js           HTTP API (Vercel function)
+api/mcp.js              MCP connector endpoint
 src/browser.js          Chromium around the vendored player
 src/design.js           design system (tokens.json, fonts, CSS, assets) to stage stylesheet
 src/film.js             in-memory film builder
@@ -158,6 +174,7 @@ src/ops.js              stills, preview, master
 src/ffmpeg.js           ffmpeg runner, codecs
 src/service.js          HTTP handler, auth, delivery
 src/remote.js           CLI side of --remote
+src/mcp.js              MCP tools and JSON-RPC dispatch
 kit/helpers.js          client-neutral animation helpers
 examples/sample/        a made-up design system, two scenes and a job
 vendor/motion/          the Motion player files (see its README)
