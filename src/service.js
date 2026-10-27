@@ -102,7 +102,10 @@ export async function handle(body, { links = false, inspect } = {}) {
   try {
     const { fps, scale, pad, reel, timecode } = options;
     const t0 = Date.now();
-    const result = await OPS[op](prepared, { names, outDir, fps, scale, pad, reel, timecode, concurrency: 2 });
+    // One film at a time: the serverless Chromium runs --single-process, so a
+    // second film gains nothing and doubles peak memory (two full-res films
+    // at once crashed it on Vercel).
+    const result = await OPS[op](prepared, { names, outDir, fps, scale, pad, reel, timecode, concurrency: 1 });
     const files = await deliver(outputs(op, result), op, { links });
     const extra = inspect ? await inspect(op, result) : undefined;
     const strip = (o) => JSON.parse(JSON.stringify(o, (k, v) => (['file', 'sheet', 'reviews', 'reel'].includes(k) ? undefined : v)));
