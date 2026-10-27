@@ -115,7 +115,11 @@ Names select items; with none, every item is processed. A preview window shows e
 
 ## The service
 
-The same three operations over HTTP, for Cowork or anything else that cannot run Chromium. Deployed as one Vercel function (`api/render.js`), the same shape as the Bunny upload service.
+The same three operations over HTTP, for Cowork or anything else that cannot run Chromium. Deployed as one Vercel function (`api/render.js`), the same shape as the Bunny upload service, at **https://video-pipeline-renderer.vercel.app/api/render** (Vercel project `video-pipeline-renderer`; the team-suffixed URLs sit behind Vercel Authentication, the production domain is open and guarded by the token). The token is the project's `VPR_TOKEN` environment variable.
+
+```bash
+VPR_TOKEN=... node bin/vpr.js preview job.json lower-third-host --remote https://video-pipeline-renderer.vercel.app
+```
 
 ```
 POST /api/render
