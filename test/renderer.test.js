@@ -275,3 +275,17 @@ test('scenes: a var() gradient clipped to text survives render() changing the el
   const ymax = Number(stats.match(/YMAX=(\d+)/)[1]);
   assert.ok(ymax > 60, `gradient figure should be visible, brightest pixel ${ymax}`);
 });
+
+test('design: flat token maps work, and undefined var() names are warned about', async () => {
+  const { resolveTokens } = await import('../src/design.js');
+  const flat = resolveTokens({ color: { 'bg-page': '#0E1420', 'fg-1': { dark: '#FFFFFF', light: '#000000' } }, radius: { 'radius-md': '12px' } }, 'dark');
+  assert.equal(flat.get('bg-page'), '#0E1420');
+  assert.equal(flat.get('fg-1'), '#FFFFFF');
+  assert.equal(flat.get('radius-md'), '12px');
+  const code = `kit.scene('g',{init(kit){kit.stage.append(kit.h('<p style="color:var(--fg-1);background:var(--bg-pgae)">x</p>'))},render(){}});`;
+  const job = await prepareJob({ format: 'landscape', design: { tokens: { color: { 'bg-page': '#0E1420', 'fg-1': '#FFFFFF' } } }, items: [{ name: 'typo', at: 0, dur: 1, scene: { code } }] }, dir, { remote: true });
+  assert.equal(job.warnings.length, 1);
+  assert.match(job.warnings[0], /typo uses var\(--bg-pgae\)/);
+  const none = await prepareJob({ format: 'landscape', design: { tokens: { color: [] } }, items: [{ name: 'n', at: 0, dur: 1, scene: { code: "kit.scene('g',{render(){}});" } }] }, dir, { remote: true });
+  assert.match(none.warnings[0], /defines no tokens/);
+});

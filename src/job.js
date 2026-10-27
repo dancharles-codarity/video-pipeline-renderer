@@ -80,6 +80,13 @@ export async function prepareJob(job, baseDir, { remote = false } = {}) {
   }));
 
   const design = await buildDesign(job.design ?? {}, read);
+  // A var() that nothing defines draws as nothing or black, silently: name them.
+  for (const it of items.filter((i) => i.type === 'graphic')) {
+    const own = new Set([...it.code.matchAll(/--([A-Za-z0-9_-]+)\s*:/g)].map((m) => m[1]));
+    const missing = [...new Set([...it.code.matchAll(/var\(\s*--([A-Za-z0-9_-]+)/g)].map((m) => m[1]))]
+      .filter((v) => !design.variables.has(v) && !own.has(v));
+    if (missing.length) design.warnings.push(`${it.name} uses ${missing.map((v) => `var(--${v})`).join(', ')}, which no token defines; check the names and the shape of design.tokens`);
+  }
   const extra = [];
   for (const [name, src] of Object.entries(job.assets ?? {})) extra.push({ name, bytes: await read(src) });
 

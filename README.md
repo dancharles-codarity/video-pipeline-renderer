@@ -44,6 +44,15 @@ The renderer holds no client material: no brand stylesheets, fonts, logos, scene
 | Footage and B-roll | Descript publishes and renders hosted on Bunny via the Bunny Hopper | `base` and `items[].src`, as URLs |
 | Scene code | Written per video (the `video-graphics` skill) | `items[].scene.code` |
 
+`design.tokens` takes the Design System artifact's shape as it comes, or a flat map written by hand; both give the same variables:
+
+```json
+{ "color": { "themes": [{ "id": "dark" }], "tokens": [{ "name": "bg-page", "value": { "dark": "#0E1420" } }] } }
+{ "color": { "bg-page": "#0E1420", "accent-default": "#2EC4B6" } }
+```
+
+A scene that uses a `var(--name)` no token defines gets a warning naming it, as does a `tokens` object that defines nothing.
+
 From the tokens the renderer builds the stage stylesheet, scoped to `#stage`:
 
 - `--<token-name>` for every token in every group, with the chosen `theme` applied and `{references}` resolved (`var(--bg-page)`, `var(--accent-default)`, `var(--radius-md)`)

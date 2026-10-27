@@ -32,11 +32,29 @@ const safeValue = (v) => {
 };
 const quote = (s) => `"${String(s).replace(/["\\]/g, '')}"`;
 
-// Every {name, value} token in every group, keyed by name.
+// A token's value: a string or number, or an object of values by theme id.
+const isValue = (v) => typeof v === 'string' || typeof v === 'number'
+  || (v && typeof v === 'object' && !Array.isArray(v) && Object.values(v).length > 0 && Object.values(v).every((x) => typeof x === 'string' || typeof x === 'number'));
+// Keys that describe the token file rather than hold tokens.
+const NOT_TOKENS = new Set(['name', 'version', 'themes', 'note', 'description']);
+
+// Every token, keyed by name. Takes the Design System shape,
+// {group: {tokens: [{name, value}]}}, and the flat shapes people write by hand,
+// {group: {name: value}} and {name: value}; a value may be {theme: value}.
 function collectTokens(tokens) {
   const all = new Map();
-  for (const group of Object.values(tokens ?? {})) {
-    if (group && Array.isArray(group.tokens)) for (const t of group.tokens) if (t?.name != null) all.set(String(t.name), t.value);
+  // At the top level, {a: x, b: y} is a themed value only when its keys are theme ids.
+  const themeIds = new Set(['dark', 'light', ...(tokens?.color?.themes ?? []).map((t) => t?.id).filter(Boolean)]);
+  const themed = (v) => v && typeof v === 'object' && isValue(v) && Object.keys(v).every((k) => themeIds.has(k));
+  for (const [key, group] of Object.entries(tokens ?? {})) {
+    if (key === 'type' || NOT_TOKENS.has(key)) continue;
+    if (group && Array.isArray(group.tokens)) {
+      for (const t of group.tokens) if (t?.name != null) all.set(String(t.name), t.value);
+    } else if (typeof group === 'string' || typeof group === 'number' || themed(group)) {
+      all.set(key, group);
+    } else if (group && typeof group === 'object') {
+      for (const [name, v] of Object.entries(group)) if (!NOT_TOKENS.has(name) && isValue(v)) all.set(name, v);
+    }
   }
   return all;
 }
@@ -99,6 +117,9 @@ export async function buildDesign(design = {}, fetchSource) {
     rules.push(`@font-face { font-family: ${quote(f.family)}; font-weight: ${safeValue(f.weight ?? 'normal')}; font-style: ${safeValue(f.style ?? 'normal')}; src: url(data:${mime};base64,${b64}) format("${FONT_FORMAT[e]}"); }`);
   }
 
+  if (tokens && !values.size) {
+    warnings.push('design.tokens defines no tokens: use the Design System shape {"color": {"themes": [{"id": "dark"}], "tokens": [{"name": "bg-page", "value": {"dark": "#0E1420"}}]}} or a flat map {"color": {"bg-page": "#0E1420"}}');
+  }
   const vars = [...values].map(([k, v]) => `--${ident(k)}: ${safeValue(v)};`);
   const families = tokens?.type?.families ?? {};
   for (const [k, v] of Object.entries(families)) vars.push(`--font-${ident(k)}: ${safeValue(v)};`);
@@ -136,5 +157,7 @@ export async function buildDesign(design = {}, fetchSource) {
     look: tokens?.name ?? 'client design',
     assets,
     warnings,
+    // Every custom property the stage defines, for checking scenes against.
+    variables: new Set([...css.matchAll(/--([A-Za-z0-9_-]+)\s*:/g)].map((m) => m[1])),
   };
 }
