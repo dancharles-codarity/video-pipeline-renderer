@@ -9,7 +9,10 @@ import { lstatSync, readdirSync, readFileSync, readlinkSync, rmSync, statSync, s
 import { join } from 'node:path';
 
 const TMP = '/tmp';
-const LEFTOVERS = /^(playwright_chromiumdev_profile-|vpr-|vpr-out-|frames-)/;
+// Our temp folders, Playwright's profiles, Chromium's shared-memory files
+// (hidden, kept in /tmp because of --disable-dev-shm-usage, and left behind
+// when a single-process Chromium dies) and crash dumps.
+const LEFTOVERS = /^(playwright_chromiumdev_profile-|playwright-artifacts-|vpr-|vpr-out-|frames-|\.org\.chromium\.|\.com\.google\.Chrome\.|core(\.\d+)?$|Crashpad)/;
 
 export function freeMB(dir = TMP) {
   try {

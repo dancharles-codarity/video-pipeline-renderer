@@ -146,7 +146,7 @@ async function callTool(name, args = {}) {
   const { job, names, fps, scale, pad, reel, timecode, times } = args;
   try {
     const out = await handle({ op, job, names, options: { fps, scale, pad, reel, timecode, times } }, { links: true, inspect });
-    const summary = { op, seconds: Math.round(out.ms / 100) / 10, result: out.result, files: out.files };
+    const summary = { op, seconds: Math.round(out.ms / 100) / 10, tmpFreeMB: out.tmpFreeMB, result: out.result, files: out.files };
     const items = Array.isArray(out.result) ? out.result : [];
     const notes = [...(out.warnings ?? []).map((w) => `design: ${w}`),
       ...items.flatMap((r) => [...(r.warnings ?? []), ...(r.problems ?? [])].map((w) => `${r.name}: ${w}`))];

@@ -160,7 +160,7 @@ async function run(body, { links = false, inspect } = {}) {
     const files = await deliver(outputs(op, result), op, { links });
     const extra = inspect ? await inspect(op, result) : undefined;
     const strip = (o) => JSON.parse(JSON.stringify(o, (k, v) => (['file', 'sheet', 'reviews', 'reel'].includes(k) ? undefined : v)));
-    return { op, ms: Date.now() - t0, warnings: prepared.warnings ?? [], result: strip(result), files, ...(extra ? { extra } : {}) };
+    return { op, ms: Date.now() - t0, tmpFreeMB: freeMB(), warnings: prepared.warnings ?? [], result: strip(result), files, ...(extra ? { extra } : {}) };
   } finally {
     clearTimeout(timer);
     rmSync(outDir, { recursive: true, force: true });
