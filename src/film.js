@@ -1,12 +1,12 @@
 // Builds the in-memory film the Motion player loads: one scene with the id `g`,
-// the brand stylesheet, the helper kit and the scene code, plus fonts and assets.
+// the client's stage stylesheet, the helper kit and the scene code, plus assets.
 // Nothing is written to disk; window.__animation.load takes the object as is.
 import { readFileSync } from 'node:fs';
 import { extname, join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const TEMPLATES = join(ROOT, 'templates');
+const HELPERS = readFileSync(join(ROOT, 'kit', 'helpers.js'), 'utf8');
 
 const MIME = {
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif',
@@ -19,36 +19,22 @@ export function mimeOf(name) {
   return m;
 }
 
-// Scene code for an item: a named template with params, a file, or inline code.
-// Templates read their params from `P`.
-export function sceneCode(scene, baseDir) {
-  if (scene.template) {
-    if (!/^(landscape|vertical)\/[a-z0-9-]+$/.test(scene.template)) throw new Error(`unknown template "${scene.template}"`);
-    const file = join(TEMPLATES, scene.template.replace(/\.js$/, '') + '.js');
-    return `const P = ${JSON.stringify(scene.params ?? {})};\n` + readFileSync(file, 'utf8');
-  }
-  const params = scene.params ? `const P = ${JSON.stringify(scene.params)};\n` : '';
-  if (scene.file) return params + readFileSync(join(baseDir, scene.file), 'utf8');
-  if (scene.code) return params + scene.code;
-  throw new Error('a graphic scene needs one of template, file or code');
-}
-
-// item: {name, dur, transparent}, fmt: a FORMATS entry, brand: a loaded brand,
-// assets: [{name, bytes}] (fonts first). Returns what window.__animation.load takes.
-export function buildFilm(item, code, fmt, brand, assets) {
+// item: {name, dur, transparent, code}, fmt: a FORMATS entry, design: from
+// buildDesign, assets: [{name, bytes}]. Returns what window.__animation.load takes.
+export function buildFilm(item, fmt, design, assets) {
   const scenes = {
-    v: 1, stage: 'final', look: brand.look, width: fmt.width, height: fmt.height, fps: fmt.fps,
-    background: item.transparent ? 'transparent' : brand.ground,
+    v: 1, stage: 'final', look: design.look, width: fmt.width, height: fmt.height, fps: fmt.fps,
+    background: item.transparent ? 'transparent' : design.ground,
     scenes: [{ id: 'g', name: item.name.slice(0, 40), dur: item.dur, desc: item.name }],
   };
-  const helper = `const RISE_DY = ${fmt.riseDy};\n` + readFileSync(join(TEMPLATES, '_helper.js'), 'utf8');
+  const helpers = item.helpers === false ? '' : `const RISE_DY = ${fmt.riseDy};\n${HELPERS}\n`;
   return {
     title: item.name,
     script: 'window.CUT = kit.scenes();\n',
     modules: [
       { name: 'scenes.json', kind: 'json', text: JSON.stringify(scenes) },
-      { name: 'base.css', kind: 'css', text: brand.css },
-      { name: 'scene-g.js', kind: 'js', text: helper + '\n' + code },
+      { name: 'base.css', kind: 'css', text: design.css },
+      { name: 'scene-g.js', kind: 'js', text: helpers + item.code },
     ],
     assets: assets.map((a) => ({ name: a.name, mime: mimeOf(a.name), base64: a.bytes.toString('base64') })),
   };

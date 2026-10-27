@@ -1,5 +1,5 @@
 // Per-format settings. Geometry that varies by canvas lives here, never in a
-// template or a brand pack, so landscape and vertical share one code path.
+// scene or a design system, so landscape and vertical share one code path.
 export const FORMATS = {
   landscape: {
     width: 1920, height: 1080, fps: 30,

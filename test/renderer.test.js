@@ -19,13 +19,20 @@ before(() => {
 });
 after(() => rmSync(dir, { recursive: true, force: true }));
 
+const ROOT = join(import.meta.dirname, '..');
+const TAG = readFileSync(join(ROOT, 'examples/sample/scenes/lower-third.js'), 'utf8');
+
 const JOB = {
   format: 'landscape',
-  brand: 'matrix-events',
+  design: {
+    tokens: join(ROOT, 'examples/sample/tokens.json'),
+    fontBase: join(ROOT, 'assets'),
+    cssFile: join(ROOT, 'examples/sample/motion.css'),
+  },
   base: 'base.mp4',
   items: [
-    { name: 'tag', dur: 2.0, at: 3.0, transparent: true, scene: { template: 'landscape/tag', params: { n: 2, title: 'Pre-production' } } },
-    { name: 'card', dur: 1.5, at: 7.0, scene: { code: "kit.scene('g',{init(kit){kit.stage.append(kit.h('<div class=\"ground\"><p class=\"display\" style=\"position:absolute;left:200px;top:400px;font-size:120px\">Card</p></div>'))},render(t){}});" } },
+    { name: 'tag', dur: 2.0, at: 3.0, transparent: true, scene: { code: TAG, params: { name: 'Sam Lee', role: 'Producer' } } },
+    { name: 'card', dur: 1.5, at: 7.0, scene: { code: "kit.scene('g',{init(kit){kit.stage.append(kit.h('<div class=\"ground\"><p class=\"sample-display\" style=\"position:absolute;left:200px;top:400px\">Card</p></div>'))},render(t){}});" } },
     { name: 'clip', type: 'broll', src: 'clip.mp4', at: 5.5, dur: 1.0 },
   ],
 };
@@ -98,8 +105,43 @@ test('timecode reads the way a timeline note quotes it', async () => {
 
 test('remote jobs cannot reach server paths', async () => {
   const remote = { remote: true };
-  await assert.rejects(prepareJob({ ...JOB, base: '/etc/passwd' }, null, remote), /URL/);
-  await assert.rejects(prepareJob({ ...JOB, base: 'https://x/a.mp4', brand: '../../etc' }, null, remote), /brand/);
-  await assert.rejects(prepareJob({ ...JOB, base: 'https://x/a.mp4', items: [{ name: 'a', dur: 1, at: 0, scene: { file: 'x.js' } }] }, null, remote), /inline/);
-  await assert.rejects(prepareJob({ ...JOB, base: 'https://x/a.mp4', items: [{ name: 'a', dur: 1, at: 0, scene: { template: '../../src/job' } }] }, null, remote), /template/);
+  const web = { ...JOB, design: {}, items: [JOB.items[1]], base: 'https://cdn.example/a.mp4' };
+  await assert.rejects(prepareJob({ ...web, base: '/etc/passwd' }, null, remote), /URL/);
+  await assert.rejects(prepareJob({ ...web, design: { tokens: '/etc/passwd' } }, null, remote), /URLs or data/);
+  await assert.rejects(prepareJob({ ...web, design: { assets: { 'a.png': 'x.png' } } }, null, remote), /URLs or data/);
+  await assert.rejects(prepareJob({ ...web, items: [{ name: 'a', dur: 1, at: 0, scene: { file: 'x.js' } }] }, null, remote), /inline/);
+  await assert.rejects(prepareJob({ ...web, items: [{ name: 'b', type: 'broll', src: 'clip.mp4', at: 0, dur: 1 }] }, null, remote), /URL/);
+});
+
+test('remote media hosts can be restricted', async () => {
+  process.env.VPR_MEDIA_HOSTS = 'codaritymedia.b-cdn.net';
+  try {
+    const web = { ...JOB, design: {}, items: [JOB.items[1]] };
+    await assert.rejects(prepareJob({ ...web, base: 'https://elsewhere.example/a.mp4' }, null, { remote: true }), /host not allowed/);
+    const ok = await prepareJob({ ...web, base: 'https://codaritymedia.b-cdn.net/clients/x/a.mp4' }, null, { remote: true });
+    assert.equal(ok.base, 'https://codaritymedia.b-cdn.net/clients/x/a.mp4');
+  } finally {
+    delete process.env.VPR_MEDIA_HOSTS;
+  }
+});
+
+test('design: themed tokens and references resolve, type styles become classes', async () => {
+  const { buildDesign, resolveTokens } = await import('../src/design.js');
+  const tokens = JSON.parse(readFileSync(join(ROOT, 'examples/sample/tokens.json'), 'utf8'));
+  assert.equal(resolveTokens(tokens, 'dark').get('bg-page'), '#0E1420');
+  assert.equal(resolveTokens(tokens, 'light').get('bg-page'), '#F7F7F2');
+  const font = 'data:font/ttf;base64,' + readFileSync(join(ROOT, 'assets/timecode.ttf')).toString('base64');
+  const read = async (src) => Buffer.from(src.slice(src.indexOf(',') + 1), 'base64');
+  const d = await buildDesign({ tokens, files: { 'timecode.ttf': font } }, read);
+  assert.equal(d.ground, '#0E1420');
+  assert.match(d.css, /@font-face \{ font-family: "Sample Sans"; font-weight: 500;/);
+  assert.match(d.css, /--accent-default: #2EC4B6;/);
+  assert.match(d.css, /#stage \.sample-display \{ font-family: var\(--font-display\); font-size: 120px/);
+});
+
+test('design: a token cannot break out of its CSS value', async () => {
+  const { buildDesign } = await import('../src/design.js');
+  const evil = { color: { tokens: [{ name: 'x', value: 'red; } body { background: url(https://evil.example/x)' }] } };
+  await assert.rejects(buildDesign({ tokens: evil }, async () => Buffer.alloc(0)), /not allowed/);
+  await assert.rejects(buildDesign({ css: '.a { background: url(https://evil.example/x.png) }' }, async () => Buffer.alloc(0)), /data: URI/);
 });

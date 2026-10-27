@@ -1,0 +1,17 @@
+{
+  "format": "landscape",
+  "design": {
+    "tokens": "tokens.json",
+    "theme": "dark",
+    "fontBase": "../../assets",
+    "cssFile": "motion.css"
+  },
+  "base": "footage/published.mp4",
+  "items": [
+    { "name": "lower-third-host", "dur": 5.0, "at": 4.0, "transparent": true,
+      "scene": { "file": "scenes/lower-third.js", "params": { "name": "Alex Morgan", "role": "Head of Events" } } },
+    { "name": "stat-attendees", "dur": 4.0, "at": 12.0,
+      "scene": { "file": "scenes/stat.js", "params": { "figure": "12,400", "label": "Attendees across the series" } } },
+    { "name": "broll-venue", "type": "broll", "src": "footage/broll.mp4", "at": 9.5, "dur": 2.0 }
+  ]
+}

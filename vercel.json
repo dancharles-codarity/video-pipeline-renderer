@@ -3,7 +3,7 @@
     "api/render.js": {
       "memory": 3009,
       "maxDuration": 300,
-      "includeFiles": "{vendor,templates,brands,assets}/**"
+      "includeFiles": "{vendor,kit,assets}/**"
     }
   }
 }

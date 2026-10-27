@@ -46,7 +46,7 @@ function select(job, names, type) {
 }
 
 async function withFilm(renderer, job, item, fn) {
-  const film = await renderer.load(buildFilm(item, item.code, job.fmt, job.brand, job.assets), job.fmt);
+  const film = await renderer.load(buildFilm(item, job.fmt, job.design, job.assets), job.fmt);
   try {
     const result = await fn(film);
     const problems = await film.problems();

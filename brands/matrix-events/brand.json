@@ -1,7 +1,0 @@
-{
-  "name": "Matrix Events",
-  "ground": "#060614",
-  "look": "Matrix Events graphics",
-  "css": { "landscape": "base-landscape.css", "vertical": "base-vertical.css" },
-  "fonts": ["fonts/Orbitron.woff2", "fonts/Jost.woff2"]
-}

@@ -1,71 +1,63 @@
-// A job file names the format, the brand, the footage to preview over and the
-// items: graphics (scene code rendered by the player) and B-roll (clips placed
-// as they are). Paths resolve against the job file's folder; URLs are fetched.
+// A job file names the format, the client's design system, the footage to
+// preview over and the items: graphics (scene code rendered by the player) and
+// B-roll (clips placed as they are). Paths resolve against the job file's
+// folder; URLs are fetched; data: URIs are decoded.
 import { readFileSync, existsSync } from 'node:fs';
-import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { format } from './formats.js';
-import { sceneCode } from './film.js';
+import { buildDesign } from './design.js';
 
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const isUrl = (s) => /^https?:\/\//i.test(s);
+const isUrl = (s) => typeof s === 'string' && /^https?:\/\//i.test(s);
+const isData = (s) => typeof s === 'string' && /^data:[^,]*;base64,/i.test(s);
 
-export async function fetchBytes(src, baseDir) {
-  if (isUrl(src)) {
-    const r = await fetch(src);
-    if (!r.ok) throw new Error(`fetch ${src}: HTTP ${r.status}`);
-    return Buffer.from(await r.arrayBuffer());
-  }
-  return readFileSync(isAbsolute(src) ? src : join(baseDir, src));
+function check(cond, msg) { if (!cond) throw new Error(msg); }
+
+// Optional allowlist for remote jobs, e.g. VPR_MEDIA_HOSTS=codaritymedia.b-cdn.net
+function hostAllowed(src) {
+  const list = (process.env.VPR_MEDIA_HOSTS ?? '').split(',').map((h) => h.trim().toLowerCase()).filter(Boolean);
+  return !list.length || list.includes(new URL(src).hostname.toLowerCase());
+}
+
+function sourceReader(baseDir, remote) {
+  return async (src) => {
+    if (isData(src)) return Buffer.from(src.slice(src.indexOf(',') + 1), 'base64');
+    if (isUrl(src)) {
+      if (remote) check(hostAllowed(src), `host not allowed: ${new URL(src).hostname}`);
+      const r = await fetch(src);
+      if (!r.ok) throw new Error(`fetch ${src}: HTTP ${r.status}`);
+      return Buffer.from(await r.arrayBuffer());
+    }
+    check(!remote, `${String(src).slice(0, 80)}: remote jobs take http(s) URLs or data: URIs only`);
+    return readFileSync(isAbsolute(src) ? src : join(baseDir, src));
+  };
 }
 
 // A media source ffmpeg reads directly: a URL stays a URL (ffmpeg seeks over
 // HTTP ranges, so only the window is downloaded), a path becomes absolute.
-export function mediaPath(src, baseDir) {
-  if (isUrl(src)) return src;
+function mediaPath(src, baseDir, remote, what) {
+  if (isUrl(src)) {
+    if (remote) check(hostAllowed(src), `${what}: host not allowed: ${new URL(src).hostname}`);
+    return src;
+  }
+  check(!remote, `${what} must be an http(s) URL (host it on Bunny first)`);
   const p = isAbsolute(src) ? src : resolve(baseDir, src);
-  if (!existsSync(p)) throw new Error(`media not found: ${p}`);
+  check(existsSync(p), `${what}: not found: ${p}`);
   return p;
 }
 
-export function loadBrand(ref, fmtName, baseDir) {
-  const dir = [baseDir && resolve(baseDir, ref), join(ROOT, 'brands', ref)].filter(Boolean).find((d) => existsSync(join(d, 'brand.json')));
-  if (!dir) throw new Error(`brand "${ref}" not found (no brand.json in ${ref} or brands/${ref})`);
-  const b = JSON.parse(readFileSync(join(dir, 'brand.json'), 'utf8'));
-  const cssFile = b.css?.[fmtName];
-  if (!cssFile) throw new Error(`brand "${ref}" has no stylesheet for ${fmtName}`);
-  return {
-    name: b.name, ground: b.ground ?? '#000000', look: b.look ?? b.name,
-    css: readFileSync(join(dir, cssFile), 'utf8'),
-    fonts: (b.fonts ?? []).map((f) => ({ name: basename(f), bytes: readFileSync(join(dir, f)) })),
-  };
-}
-
-function check(cond, msg) { if (!cond) throw new Error(msg); }
-
-// Accepts a parsed job and the folder its relative paths resolve against.
-// remote: true when the job came over HTTP. Then every media source must be a
-// URL, scenes must be a template or inline code, and the brand a bundled name,
-// so a request can never read files off the server.
+// remote: true when the job came over HTTP. Then every source must be a URL or
+// a data: URI and scenes must be inline code, so a request can never read files
+// off the server.
 export async function prepareJob(job, baseDir, { remote = false } = {}) {
   check(job && typeof job === 'object', 'job must be an object');
-  if (remote) {
-    const url = (s, what) => check(typeof s === 'string' && isUrl(s), `${what} must be an http(s) URL`);
-    if (job.base) url(job.base, 'base');
-    if (job.brand) check(/^[a-z0-9][a-z0-9-]{0,63}$/.test(job.brand), 'brand must be a bundled brand name');
-    for (const [name, src] of Object.entries(job.assets ?? {})) url(src, `assets.${name}`);
-    for (const [i, it] of (job.items ?? []).entries()) {
-      if (it.src !== undefined) url(it.src, `items[${i}].src`);
-      check(!it.scene?.file, `items[${i}].scene.file is not accepted remotely: send the code inline`);
-    }
-  }
-  const fmt = format(job.format ?? 'landscape');
   const fmtName = job.format ?? 'landscape';
+  const fmt = format(fmtName);
   check(Array.isArray(job.items) && job.items.length, 'job.items must list at least one item');
-  const brand = job.brand ? loadBrand(job.brand, fmtName, baseDir) : null;
+  const read = sourceReader(baseDir, remote);
+  if (job.design?.cssFile !== undefined) check(typeof job.design.cssFile === 'string', 'design.cssFile must be a source');
 
   const names = new Set();
-  const items = job.items.map((it, i) => {
+  const items = await Promise.all(job.items.map(async (it, i) => {
     const where = `items[${i}]`;
     check(typeof it.name === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(it.name), `${where}.name must be a plain file-safe name`);
     check(!names.has(it.name), `${where}.name "${it.name}" is used twice`);
@@ -75,22 +67,26 @@ export async function prepareJob(job, baseDir, { remote = false } = {}) {
     if (type === 'broll') {
       check(typeof it.src === 'string', `${where}.src must name the clip`);
       check(typeof it.dur === 'number' && it.dur > 0, `${where}.dur must be the clip's length on the timeline`);
-      return { ...it, type, in: it.in ?? 0, src: mediaPath(it.src, baseDir) };
+      return { ...it, type, in: it.in ?? 0, src: mediaPath(it.src, baseDir, remote, `${where}.src`) };
     }
     check(type === 'graphic', `${where}.type must be graphic or broll`);
-    check(brand, 'graphics need job.brand');
     check(typeof it.dur === 'number' && it.dur > 0 && it.dur <= 300, `${where}.dur must be 0 to 300 seconds`);
-    check(it.scene && typeof it.scene === 'object', `${where}.scene must give a template, file or code`);
-    return { ...it, type, transparent: !!it.transparent, code: sceneCode(it.scene, baseDir) };
-  });
+    const scene = it.scene ?? {};
+    check(typeof scene.code === 'string' || typeof scene.file === 'string', `${where}.scene must give code or a file`);
+    check(!(remote && scene.file), `${where}.scene.file is not accepted remotely: send the code inline`);
+    let code = scene.code ?? (await read(scene.file)).toString('utf8');
+    if (scene.params) code = `const P = ${JSON.stringify(scene.params)};\n` + code;
+    return { ...it, type, transparent: !!it.transparent, code };
+  }));
 
+  const design = await buildDesign(job.design ?? {}, read);
   const extra = [];
-  for (const [name, src] of Object.entries(job.assets ?? {})) extra.push({ name, bytes: await fetchBytes(src, baseDir) });
+  for (const [name, src] of Object.entries(job.assets ?? {})) extra.push({ name, bytes: await read(src) });
 
   return {
-    fmt, fmtName, brand, items,
-    assets: [...(brand?.fonts ?? []), ...extra],
-    base: job.base ? mediaPath(job.base, baseDir) : null,
+    fmt, fmtName, design, items,
+    assets: [...design.assets, ...extra],
+    base: job.base ? mediaPath(job.base, baseDir, remote, 'base') : null,
   };
 }
 

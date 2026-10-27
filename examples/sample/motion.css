@@ -1,0 +1,7 @@
+/* The client's motion layer, normally from the Motion and Video section of
+   their design file. Token variables and type classes come from tokens.json. */
+.clear { position:absolute; inset:0 }
+.ground { position:absolute; inset:0; background:var(--bg-page) }
+.panel { position:absolute; border-radius:var(--radius-md); background:var(--bg-panel) }
+.rule { position:absolute; height:6px; border-radius:3px; background:var(--accent-default); transform-origin:0 50% }
+.eyebrow { color:var(--accent-default); text-transform:uppercase }
